@@ -21,6 +21,29 @@ jobs:
           BUILD: ${{ github.run_number }}
         run: ./scripts/build-app.sh
 
+      - name: Captures d'écran de l'interface
+        if: success()
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/shots
+          ./dist/OptiMac.app/Contents/MacOS/OptiMac --tour /tmp/shots &
+          PID=$!
+          for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          kill $PID 2>/dev/null || true
+          ls -la /tmp/shots
+          git config user.name "OptiMac CI"
+          git config user.email "ci@secureetech.com"
+          git fetch origin screenshots 2>/dev/null || true
+          git checkout --orphan screenshots
+          git rm -rf . >/dev/null
+          rm -rf dist .build build.log Sources Resources scripts Package.swift README.md
+          cp /tmp/shots/*.png .
+          echo "${{ github.sha }}" > commit.txt
+          git add *.png commit.txt
+          git commit -m "Captures ${{ github.run_number }}"
+          git push -f origin screenshots
+          git checkout -f main
+
       - name: Publier le journal de compilation (en cas d'erreur)
         if: failure()
         run: |

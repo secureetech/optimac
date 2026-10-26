@@ -22,11 +22,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     let updater = Updater()
     lazy var model = Model(license: license, settings: settings)
 
-    private var window: NSWindow?
+    var window: NSWindow?
     private var statusItem: NSStatusItem?
     private var hourly: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Mode « visite » : captures d'écran automatiques (utilisé par la compilation GitHub)
+        if let i = CommandLine.arguments.firstIndex(of: "--tour"), i + 1 < CommandLine.arguments.count {
+            runTour(into: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            return
+        }
         NSApp.setActivationPolicy(.regular)
         settings.applyAppearance()
         installErrorReporting()
