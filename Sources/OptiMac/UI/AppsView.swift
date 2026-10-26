@@ -100,7 +100,7 @@ struct AppsView: View {
                     .toggleStyle(SwitchToggleStyle(tint: Palette.accent))
                     .font(.system(size: 12.5))
             }
-            GlassCard(tint: Palette.accent, padding: 14) {
+            GlassCard(padding: 14, tint: Palette.accent) {
                 HStack(spacing: 10) {
                     Image(systemName: "info.circle.fill").foregroundColor(Palette.accent)
                     Muted("« Désinstaller » supprime l'application et tous ses restes. « Forcer » ferme l'application, coupe ce qui la relance et supprime même les fichiers protégés (mot de passe administrateur demandé).")
@@ -211,7 +211,7 @@ struct AppsView: View {
 
     private var startupTab: some View {
         VStack(spacing: 8) {
-            GlassCard(tint: Palette.blue, padding: 14) {
+            GlassCard(padding: 14, tint: Palette.blue) {
                 Muted("Désactiver un élément ne supprime pas le logiciel : il ne se lance simplement plus tout seul. Vous pouvez le réactiver à tout moment.")
             }
             ForEach(model.startup) { s in

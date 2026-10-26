@@ -159,7 +159,8 @@ final class Monitor: ObservableObject {
     init() {
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            guard let strong = self else { return }
+            Task { @MainActor in strong.tick() }
         }
     }
 

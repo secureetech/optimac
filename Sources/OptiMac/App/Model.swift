@@ -55,7 +55,7 @@ final class StopFlag {
 }
 
 /// Exécute un travail lourd hors de l'interface puis revient avec le résultat.
-func background<T>(_ work: @escaping () -> T) async -> T {
+func runInBackground<T>(_ work: @escaping () -> T) async -> T {
     await withCheckedContinuation { c in
         DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: work()) }
     }
@@ -170,26 +170,26 @@ final class Model: ObservableObject {
 
     private func runScan() async {
         progressLabel = "Recherche des fichiers inutiles…"
-        cleanup = await background { CleanupEngine.scan() }
+        cleanup = await runInBackground { CleanupEngine.scan() }
         progress = 0.3
 
         progressLabel = "Recherche des menaces…"
-        let found = await background { ThreatEngine.scan(full: false, step: { _, _ in }, cancelled: { false }) }
+        let found = await runInBackground { ThreatEngine.scan(full: false, step: { _, _ in }, cancelled: { false }) }
         threats = found
         selectedThreats = Set(found.filter { $0.severity >= .medium }.map(\.id))
         lastThreatScan = Date()
         progress = 0.55
 
         progressLabel = "Vérification des navigateurs…"
-        browsers = await background { BrowserEngine.scan() }
+        browsers = await runInBackground { BrowserEngine.scan() }
         progress = 0.7
 
         progressLabel = "Analyse du démarrage…"
-        startup = await background { StartupEngine.list() }
+        startup = await runInBackground { StartupEngine.list() }
         progress = 0.85
 
         progressLabel = "Santé du disque…"
-        disk = await background { HealthEngine.disk() }
+        disk = await runInBackground { HealthEngine.disk() }
         progress = 1
 
         buildFindings()
@@ -248,35 +248,35 @@ final class Model: ObservableObject {
         boostSteps = []
         Task {
             boostSteps.append("Création d'un instantané Time Machine…")
-            _ = await background { MaintenanceEngine.snapshot() }
+            _ = await runInBackground { MaintenanceEngine.snapshot() }
 
             let chosen = Set(findings.filter { $0.selected }.map(\.id))
             var cats = cleanup
             for i in cats.indices { cats[i].selected = chosen.contains("clean:" + cats[i].id) }
             boostSteps.append("Nettoyage des fichiers inutiles…")
             let limit: Int64? = premium ? nil : PremiumRules.freeCleanupLimit
-            let got = await background { CleanupEngine.clean(cats, limit: limit) }
+            let got = await runInBackground { CleanupEngine.clean(cats, limit: limit) }
             freed = got
 
             if premium && chosen.contains("threats") {
                 boostSteps.append("Mise en quarantaine des menaces…")
                 let list = threats.filter { selectedThreats.contains($0.id) }
-                _ = await background { ThreatEngine.remove(list, quarantine: true) }
+                _ = await runInBackground { ThreatEngine.remove(list, quarantine: true) }
                 threats.removeAll { selectedThreats.contains($0.id) }
                 quarantine = ThreatEngine.loadQuarantine()
             }
             if premium {
                 for b in browsers where b.hijacked && chosen.contains("browser:" + b.id) {
                     boostSteps.append("Réparation de \(b.name)…")
-                    _ = await background { BrowserEngine.repair(b) }
+                    _ = await runInBackground { BrowserEngine.repair(b) }
                 }
             }
             if chosen.contains("startup") {
                 boostSteps.append("Allègement du démarrage…")
                 for item in startup where item.useless && item.enabled && item.kind == .agent {
-                    await background { StartupEngine.toggle(item) }
+                    await runInBackground { StartupEngine.toggle(item) }
                 }
-                startup = await background { StartupEngine.list() }
+                startup = await runInBackground { StartupEngine.list() }
             }
             boostSteps.append("Terminé")
             phase = .done
@@ -303,7 +303,7 @@ final class Model: ObservableObject {
     func loadCleanup() {
         cleanupLoading = true
         Task {
-            cleanup = await background { CleanupEngine.scan() }
+            cleanup = await runInBackground { CleanupEngine.scan() }
             cleanupLoading = false
         }
     }
@@ -313,7 +313,7 @@ final class Model: ObservableObject {
         let limit: Int64? = premium ? nil : PremiumRules.freeCleanupLimit
         working = "Nettoyage en cours…"
         Task {
-            let got = await background { CleanupEngine.clean(cats, limit: limit) }
+            let got = await runInBackground { CleanupEngine.clean(cats, limit: limit) }
             working = nil
             log("Nettoyage : \(Fmt.bytes(got)) libérés")
             notify("\(Fmt.bytes(got)) libérés")
@@ -328,7 +328,7 @@ final class Model: ObservableObject {
     func loadSpace() {
         spaceLoading = true
         Task {
-            let r = await background { SpaceEngine.scan(progress: { label in
+            let r = await runInBackground { SpaceEngine.scan(progress: { label in
                 DispatchQueue.main.async { self.spaceLabel = label }
             }) }
             space = r
@@ -339,7 +339,7 @@ final class Model: ObservableObject {
     func trashFiles(_ urls: [URL]) {
         if needsPremium(.deleteDuplicates) { return }
         Task {
-            let n = await background { urls.filter { FS.trash($0) }.count }
+            let n = await runInBackground { urls.filter { FS.trash($0) }.count }
             log("Espace disque : \(n) fichier(s) mis à la corbeille")
             notify("\(n) fichier(s) mis à la corbeille")
             loadSpace()
@@ -350,7 +350,7 @@ final class Model: ObservableObject {
         if needsPremium(.cloudFree) { return }
         working = "Libération de \(folder.name)…"
         Task {
-            let got = await background { SpaceEngine.freeCloud(folder) }
+            let got = await runInBackground { SpaceEngine.freeCloud(folder) }
             working = nil
             notify("\(Fmt.bytes(got)) libérés (les fichiers restent dans le cloud)")
             loadSpace()
@@ -365,7 +365,7 @@ final class Model: ObservableObject {
         stop.value = false
         threatProgress = 0
         Task {
-            let found = await background {
+            let found = await runInBackground {
                 ThreatEngine.scan(full: full, step: { label, p in
                     DispatchQueue.main.async { self.threatStep = label; self.threatProgress = p }
                 }, cancelled: { [stop = self.stop] in stop.value })
@@ -389,7 +389,7 @@ final class Model: ObservableObject {
         guard !list.isEmpty else { return }
         working = "Traitement des menaces…"
         Task {
-            let n = await background { ThreatEngine.remove(list, quarantine: quarantine) }
+            let n = await runInBackground { ThreatEngine.remove(list, quarantine: quarantine) }
             working = nil
             threats.removeAll { selectedThreats.contains($0.id) }
             selectedThreats = []
@@ -407,7 +407,7 @@ final class Model: ObservableObject {
     }
 
     func loadBrowsers() {
-        Task { browsers = await background { BrowserEngine.scan() } }
+        Task { browsers = await runInBackground { BrowserEngine.scan() } }
     }
 
     func repairBrowsers() {
@@ -415,7 +415,7 @@ final class Model: ObservableObject {
         let list = browsers.filter(\.hijacked)
         working = "Réparation des navigateurs…"
         Task {
-            for b in list { _ = await background { BrowserEngine.repair(b) } }
+            for b in list { _ = await runInBackground { BrowserEngine.repair(b) } }
             working = nil
             log("Navigateurs réparés : \(list.map(\.name).joined(separator: ", "))")
             notify("Navigateurs réparés")
@@ -425,10 +425,10 @@ final class Model: ObservableObject {
 
     func loadSecurity() {
         Task {
-            security = await background { SecurityEngine.status() }
-            cameraApps = await background { SecurityEngine.tccApps(service: "kTCCServiceCamera") }
-            micApps = await background { SecurityEngine.tccApps(service: "kTCCServiceMicrophone") }
-            privacy = await background { PrivacyEngine.scan() }
+            security = await runInBackground { SecurityEngine.status() }
+            cameraApps = await runInBackground { SecurityEngine.tccApps(service: "kTCCServiceCamera") }
+            micApps = await runInBackground { SecurityEngine.tccApps(service: "kTCCServiceMicrophone") }
+            privacy = await runInBackground { PrivacyEngine.scan() }
         }
     }
 
@@ -437,7 +437,7 @@ final class Model: ObservableObject {
         let items = privacy
         working = "Effacement des traces…"
         Task {
-            await background { PrivacyEngine.clean(items) }
+            await runInBackground { PrivacyEngine.clean(items) }
             working = nil
             log("Traces de navigation effacées")
             notify("Traces effacées")
@@ -447,14 +447,14 @@ final class Model: ObservableObject {
 
     func enableFirewall() {
         Task {
-            _ = await background { SecurityEngine.enableFirewall() }
+            _ = await runInBackground { SecurityEngine.enableFirewall() }
             loadSecurity()
         }
     }
 
     func restore(_ q: QuarantineItem) {
         Task {
-            await background { ThreatEngine.restore(q) }
+            await runInBackground { ThreatEngine.restore(q) }
             quarantine = ThreatEngine.loadQuarantine()
         }
     }
@@ -469,11 +469,11 @@ final class Model: ObservableObject {
     func loadApps() {
         appsLoading = true
         Task {
-            let list = await background { AppsEngine.withSizes(AppsEngine.list()) }
+            let list = await runInBackground { AppsEngine.withSizes(AppsEngine.list()) }
             apps = list
             menuBarApps = AppsEngine.menuBarApps()
-            startup = await background { StartupEngine.list() }
-            extensions = await background { AppsEngine.extensions() }
+            startup = await runInBackground { StartupEngine.list() }
+            extensions = await runInBackground { AppsEngine.extensions() }
             appsLoading = false
         }
     }
@@ -490,8 +490,8 @@ final class Model: ObservableObject {
         if force && needsPremium(.forceUninstall) { return }
         working = "Désinstallation de \(app.name)…"
         Task {
-            let left = await background { AppsEngine.leftovers(for: app) }
-            let ok = await background { AppsEngine.uninstall(app, leftovers: left, force: force) }
+            let left = await runInBackground { AppsEngine.leftovers(for: app) }
+            let ok = await runInBackground { AppsEngine.uninstall(app, leftovers: left, force: force) }
             working = nil
             log("\(app.name) \(ok ? "désinstallé" : "n'a pas pu être désinstallé")")
             notify(ok ? "\(app.name) a été supprimé" : "\(app.name) résiste : utilisez la suppression forcée")
@@ -510,15 +510,15 @@ final class Model: ObservableObject {
 
     func toggleStartup(_ item: StartupItem) {
         Task {
-            await background { StartupEngine.toggle(item) }
-            startup = await background { StartupEngine.list() }
+            await runInBackground { StartupEngine.toggle(item) }
+            startup = await runInBackground { StartupEngine.list() }
         }
     }
 
     func removeExtension(_ e: ExtensionItem) {
         Task {
-            await background { AppsEngine.removeExtension(e) }
-            extensions = await background { AppsEngine.extensions() }
+            await runInBackground { AppsEngine.removeExtension(e) }
+            extensions = await runInBackground { AppsEngine.extensions() }
         }
     }
 
@@ -526,32 +526,32 @@ final class Model: ObservableObject {
 
     func loadHealth() {
         Task {
-            disk = await background { HealthEngine.disk() }
-            battery = await background { HealthEngine.battery() }
-            hardware = await background { HealthEngine.hardware() }
-            processes = await background { PerformanceEngine.heavyProcesses() }
+            disk = await runInBackground { HealthEngine.disk() }
+            battery = await runInBackground { HealthEngine.battery() }
+            hardware = await runInBackground { HealthEngine.hardware() }
+            processes = await runInBackground { PerformanceEngine.heavyProcesses() }
         }
     }
 
     func freeMemory() {
         Task {
-            let ok = await background { PerformanceEngine.freeMemory() }
+            let ok = await runInBackground { PerformanceEngine.freeMemory() }
             if ok { notify("Mémoire vive libérée"); log("Mémoire vive libérée") }
-            processes = await background { PerformanceEngine.heavyProcesses() }
+            processes = await runInBackground { PerformanceEngine.heavyProcesses() }
         }
     }
 
     func quit(_ p: ProcessInfoItem, force: Bool) {
         PerformanceEngine.quit(p.pid, force: force)
-        Task { processes = await background { PerformanceEngine.heavyProcesses() } }
+        Task { processes = await runInBackground { PerformanceEngine.heavyProcesses() } }
     }
 
     func scanNetwork() {
         netLoading = true
         netProgress = 0
         Task {
-            wifi = await background { NetworkEngine.wifi() }
-            devices = await background { NetworkEngine.scanDevices(progress: { p in
+            wifi = await runInBackground { NetworkEngine.wifi() }
+            devices = await runInBackground { NetworkEngine.scanDevices(progress: { p in
                 DispatchQueue.main.async { self.netProgress = p }
             }) }
             netLoading = false
@@ -572,7 +572,7 @@ final class Model: ObservableObject {
 
     func repairInternet() {
         Task {
-            let ok = await background { NetworkEngine.repairConnection() }
+            let ok = await runInBackground { NetworkEngine.repairConnection() }
             notify(ok ? "Connexion réparée" : "Réparation annulée")
         }
     }
@@ -582,7 +582,7 @@ final class Model: ObservableObject {
         let list = maintenance
         working = "Maintenance en cours…"
         Task {
-            let ok = await background { MaintenanceEngine.run(list) }
+            let ok = await runInBackground { MaintenanceEngine.run(list) }
             working = nil
             log("Maintenance \(ok ? "terminée" : "annulée")")
             notify(ok ? "Maintenance terminée" : "Maintenance annulée")
@@ -592,7 +592,7 @@ final class Model: ObservableObject {
     func forceDelete(_ urls: [URL]) {
         if needsPremium(.forceUninstall) { return }
         Task {
-            let r = await background { FileTools.forceDelete(urls) }
+            let r = await runInBackground { FileTools.forceDelete(urls) }
             log("Suppression forcée : \(r.ok) élément(s)")
             notify(r.refused.isEmpty ? "\(r.ok) élément(s) supprimé(s)" : "Refusé (élément système protégé) : \(r.refused.joined(separator: ", "))")
         }
@@ -601,7 +601,7 @@ final class Model: ObservableObject {
     func shred(_ urls: [URL]) {
         if needsPremium(.shredder) { return }
         Task {
-            let n = await background { FileTools.shred(urls) }
+            let n = await runInBackground { FileTools.shred(urls) }
             log("Broyeur : \(n) élément(s) détruit(s)")
             notify("\(n) élément(s) détruit(s) définitivement")
         }
@@ -609,7 +609,7 @@ final class Model: ObservableObject {
 
     func reduceEffects(_ on: Bool) {
         Task {
-            await background { PerformanceEngine.reduceVisualEffects(on) }
+            await runInBackground { PerformanceEngine.reduceVisualEffects(on) }
             notify(on ? "Effets visuels réduits" : "Effets visuels restaurés")
         }
     }
@@ -633,7 +633,7 @@ final class Model: ObservableObject {
         if !premium, settings.notifPremium, now.timeIntervalSince(settings.date("lastPremiumNotif") ?? .distantPast) > 2 * 86400 {
             settings.setDate("lastPremiumNotif", now)
             Task {
-                let cats = await background { CleanupEngine.scan() }
+                let cats = await runInBackground { CleanupEngine.scan() }
                 let junk = cats.filter(\.safe).reduce(0) { $0 + $1.size }
                 var body = "\(Fmt.bytes(junk)) de fichiers inutiles peuvent être nettoyés."
                 if dangerCount > 0 { body += " \(dangerCount) menace(s) à supprimer." }
@@ -644,8 +644,8 @@ final class Model: ObservableObject {
 
     func autoCleanNow() {
         Task {
-            let cats = await background { CleanupEngine.scan() }
-            let got = await background { CleanupEngine.clean(cats.filter(\.safe), limit: nil) }
+            let cats = await runInBackground { CleanupEngine.scan() }
+            let got = await runInBackground { CleanupEngine.clean(cats.filter(\.safe), limit: nil) }
             log("Nettoyage automatique : \(Fmt.bytes(got)) libérés")
             if settings.notifCleanDone { Notifier.post("Nettoyage automatique", "\(Fmt.bytes(got)) libérés.") }
         }

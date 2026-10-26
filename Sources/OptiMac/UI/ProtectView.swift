@@ -211,7 +211,7 @@ struct ProtectView: View {
                 }
                 SecurityRow(title: "Pare-feu", detail: "Bloque les connexions entrantes non autorisées.", ok: s.firewall, action: s.firewall ? nil : ("Activer", { model.enableFirewall() }))
                 SecurityRow(title: "Gatekeeper", detail: "N'autorise que les applications vérifiées.", ok: s.gatekeeper, action: s.gatekeeper ? nil : ("Réactiver", {
-                    Task { _ = await background { SecurityEngine.enableGatekeeper() }; model.loadSecurity() }
+                    Task { _ = await runInBackground { SecurityEngine.enableGatekeeper() }; model.loadSecurity() }
                 }))
                 SecurityRow(title: "FileVault", detail: "Chiffre le disque si le Mac est volé.", ok: s.fileVault, action: s.fileVault ? nil : ("Ouvrir", { SecurityEngine.openFileVault() }))
                 SecurityRow(title: "Protection de l'intégrité du système", detail: "Empêche la modification de macOS.", ok: s.sip, action: nil)
@@ -264,7 +264,7 @@ struct ProtectView: View {
                     }
                     Spacer()
                     Button("Désactiver") {
-                        Task { let ok = await background { SecurityEngine.disableAnalyticsSharing() }; if ok { model.notify("Partage d'analyses désactivé") } }
+                        Task { let ok = await runInBackground { SecurityEngine.disableAnalyticsSharing() }; if ok { model.notify("Partage d'analyses désactivé") } }
                     }
                     .buttonStyle(GlassButtonStyle())
                 }

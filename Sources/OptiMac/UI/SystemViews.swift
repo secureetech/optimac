@@ -355,7 +355,7 @@ struct ToolsView: View {
                             Muted("Crée un instantané Time Machine local avant une grosse modification.")
                             Button("Créer maintenant") {
                                 Task {
-                                    let ok = await background { MaintenanceEngine.snapshot() }
+                                    let ok = await runInBackground { MaintenanceEngine.snapshot() }
                                     model.notify(ok ? "Instantané créé" : "Instantané impossible (Time Machine désactivé ?)")
                                 }
                             }

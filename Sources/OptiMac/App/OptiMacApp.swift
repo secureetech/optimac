@@ -61,9 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         }
 
         hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            guard let strong = self else { return }
             Task { @MainActor in
-                self?.model.backgroundTick()
-                await self?.license.heartbeat()
+                strong.model.backgroundTick()
+                await strong.license.heartbeat()
             }
         }
     }
@@ -203,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 /// Envoi non bloquant des erreurs à api.secureetech.com (sans donnée personnelle).
 enum ErrorReport {
     static func send(_ message: String, wait: Bool = false) {
-        var req = URLRequest(url: LicenseManager.api.appendingPathComponent("/v1/error-report"))
+        var req = URLRequest(url: URL(string: "https://api.secureetech.com/v1/error-report")!)
         req.httpMethod = "POST"
         req.timeoutInterval = 8
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
