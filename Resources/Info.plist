@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>OptiMac</string>
+	<key>CFBundleDisplayName</key><string>OptiMac</string>
+	<key>CFBundleIdentifier</key><string>com.secureetech.optimac</string>
+	<key>CFBundleExecutable</key><string>OptiMac</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>__VERSION__</string>
+	<key>CFBundleVersion</key><string>__BUILD__</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundleDevelopmentRegion</key><string>fr</string>
+	<key>LSMinimumSystemVersion</key><string>11.0</string>
+	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>NSHumanReadableCopyright</key><string>© 2026 H2OCONSULTING - FZCO · SecureeTech</string>
+	<key>NSAppleEventsUsageDescription</key><string>OptiMac gère les éléments qui s'ouvrent au démarrage de votre Mac.</string>
+</dict>
+</plist>

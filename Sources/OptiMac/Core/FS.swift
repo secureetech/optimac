@@ -156,6 +156,7 @@ enum Fmt {
 enum ErrorLog {
     private static let queue = DispatchQueue(label: "optimac.errorlog")
     static func write(_ message: String) {
+        ErrorReport.send(message)
         queue.async {
             let dir = FS.lib("Logs/OptiMac")
             FS.ensureDir(dir)

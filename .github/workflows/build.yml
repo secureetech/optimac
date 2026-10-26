@@ -1,0 +1,46 @@
+name: Compiler OptiMac
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fabriquer OptiMac.app et le .dmg
+        id: build
+        env:
+          VERSION: "1.0.0"
+          BUILD: ${{ github.run_number }}
+        run: ./scripts/build-app.sh
+
+      - name: Publier le journal de compilation (en cas d'erreur)
+        if: failure()
+        run: |
+          git config user.name "OptiMac CI"
+          git config user.email "ci@secureetech.com"
+          mkdir -p /tmp/log && cp build.log /tmp/log/build.log 2>/dev/null || echo "pas de build.log" > /tmp/log/build.log
+          grep -E "error:" /tmp/log/build.log | sort -u | head -80 > /tmp/log/errors.txt || true
+          git checkout --orphan build-log
+          git rm -rf . >/dev/null
+          cp /tmp/log/* .
+          echo "${{ github.sha }}" > commit.txt
+          git add build.log errors.txt commit.txt
+          git commit -m "Journal de compilation ${{ github.run_number }}"
+          git push -f origin build-log
+
+      - name: Publier le .dmg
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/OptiMac-1.0.0.dmg --title "OptiMac 1.0.0 (build ${{ github.run_number }})" \
+            --notes "Version de test pour macOS 11 Big Sur et plus récent (Intel et Apple Silicon). Non signée Apple : clic droit › Ouvrir au premier lancement."

@@ -1,4 +1,6 @@
 .build/
 .swiftpm/
 build/
+dist/
 *.dmg
+build.log
