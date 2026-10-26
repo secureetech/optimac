@@ -36,7 +36,6 @@ jobs:
           git fetch origin screenshots 2>/dev/null || true
           git checkout --orphan screenshots
           git rm -rf . >/dev/null
-          rm -rf dist .build build.log Sources Resources scripts Package.swift README.md
           cp /tmp/shots/*.png .
           echo "${{ github.sha }}" > commit.txt
           git add *.png commit.txt
