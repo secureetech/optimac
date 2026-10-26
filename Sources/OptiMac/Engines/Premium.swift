@@ -4,7 +4,7 @@ import Foundation
 /// ajuster l'offre facilement.
 enum PremiumFeature: String, Identifiable {
     case unlimitedCleanup, fullSpaceResults, browserRepair, privacy, maintenance
-    case forceUninstall, shredder, cloudFree, deleteDuplicates
+    case forceUninstall, shredder, cloudFree, deleteDuplicates, threatRemoval, autoClean
 
     var id: String { rawValue }
 
@@ -19,6 +19,8 @@ enum PremiumFeature: String, Identifiable {
         case .shredder: return "Broyeur de fichiers sécurisé"
         case .cloudFree: return "Libération des fichiers iCloud, Google Drive et OneDrive"
         case .deleteDuplicates: return "Suppression des doublons et des gros fichiers"
+        case .threatRemoval: return "Suppression et quarantaine des menaces"
+        case .autoClean: return "Nettoyage automatique chaque jour ou chaque semaine"
         }
     }
 }
