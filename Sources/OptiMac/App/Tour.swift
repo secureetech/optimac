@@ -16,7 +16,7 @@ extension AppDelegate {
             func wait(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000)) }
             func shot(_ name: String) async {
                 await wait(1.6)
-                self.capture(to: dir.appendingPathComponent(name + ".png"))
+                await self.capture(to: dir.appendingPathComponent(name + ".png"))
             }
 
             await wait(2.5)
