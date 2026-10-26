@@ -1,0 +1,53 @@
+0%: Compute target dependency graph
+Building targets in dependency order
+Target dependency graph (2 targets)
+0%: Gather provisioning inputs
+0%: Create build description
+0%: Discovering version info for swiftc
+0%: Discovering version info for clang
+0%: Discovering version info for ld
+Build description signature: a18a22ac535bc1f989837febd5f35d2e
+
+Build description path: /Users/runner/work/optimac/optimac/.build/apple/Intermediates.noindex/XCBuildData/a18a22ac535bc1f989837febd5f35d2e.xcbuilddata
+
+0%: Create build directory $(TARGET_BUILD_DIR)
+0%: Create build directory $(OBJROOT)
+0%: Build stat cache for /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk
+0%: Create build directory $(TARGET_BUILD_DIR)/Release
+0%: Create build directory $(OBJROOT)/EagerLinkingTBDs/Release
+0%: Create build directory $(TARGET_BUILD_DIR)/Release/PackageFrameworks
+0%: Write OptiMac_const_extract_protocols.json (x86_64)
+0%: Write OptiMac.LinkFileList (x86_64)
+0%: Write OptiMac.LinkFileList (arm64)
+0%: Write OptiMac.SwiftFileList (x86_64)
+0%: Write OptiMac-OutputFileMap.json (x86_64)
+0%: Write OptiMac_const_extract_protocols.json (arm64)
+0%: Write OptiMac.SwiftFileList (arm64)
+0%: Write OptiMac-OutputFileMap.json (arm64)
+45%: Planning Swift module OptiMac (x86_64)
+45%: Planning Swift module OptiMac (arm64)
+45%: Compile OptiMac (arm64)
+45%: Compile OptiMac (x86_64)
+45%: Compiling Model.swift, OptiMacApp.swift, Settings.swift, Tour.swift, FS.swift, HTTP.swift, Notifier.swift, Shell.swift, SystemInfo.swift, AppsEngine.swift, BrowserEngine.swift, CleanupEngine.swift, Premium.swift, SpaceEngine.swift, SystemEngines.swift, ThreatEngine.swift, LicenseManager.swift, AppsView.swift, CleanSpaceViews.swift, Glass.swift, HomeView.swift, ProtectView.swift, RootView.swift, SettingsViews.swift, SystemViews.swift, Theme.swift
+45%: Compiling Model.swift, OptiMacApp.swift, Settings.swift, Tour.swift, FS.swift, HTTP.swift, Notifier.swift, Shell.swift, SystemInfo.swift, AppsEngine.swift, BrowserEngine.swift, CleanupEngine.swift, Premium.swift, SpaceEngine.swift, SystemEngines.swift, ThreatEngine.swift, LicenseManager.swift, AppsView.swift, CleanSpaceViews.swift, Glass.swift, HomeView.swift, ProtectView.swift, RootView.swift, SettingsViews.swift, SystemViews.swift, Theme.swift
+45%: Compile 26 Swift source files (arm64)
+45%: Compile 26 Swift source files (x86_64)
+expression is 'async' but is not marked with 'await'
+expression is 'async' but is not marked with 'await'
+/Users/runner/work/optimac/optimac/Sources/OptiMac/App/Tour.swift:19:17: error: expression is 'async' but is not marked with 'await'
+                self.capture(to: dir.appendingPathComponent(name + ".png"))
+                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                await 
+/Users/runner/work/optimac/optimac/Sources/OptiMac/App/Tour.swift:19:17: note: calls to instance method 'capture(to:)' from outside of its actor context are implicitly asynchronous
+                self.capture(to: dir.appendingPathComponent(name + ".png"))
+                ^
+
+/Users/runner/work/optimac/optimac/Sources/OptiMac/App/Tour.swift:19:17: error: expression is 'async' but is not marked with 'await'
+                self.capture(to: dir.appendingPathComponent(name + ".png"))
+                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                await 
+/Users/runner/work/optimac/optimac/Sources/OptiMac/App/Tour.swift:19:17: note: calls to instance method 'capture(to:)' from outside of its actor context are implicitly asynchronous
+                self.capture(to: dir.appendingPathComponent(name + ".png"))
+                ^
+
+Build cancelled
