@@ -452,6 +452,27 @@ final class Model: ObservableObject {
         }
     }
 
+    func enableGatekeeper() {
+        Task {
+            _ = await runInBackground { SecurityEngine.enableGatekeeper() }
+            loadSecurity()
+        }
+    }
+
+    func disableAnalytics() {
+        Task {
+            let ok = await runInBackground { SecurityEngine.disableAnalyticsSharing() }
+            if ok { notify("Partage d'analyses désactivé") }
+        }
+    }
+
+    func createSnapshot() {
+        Task {
+            let ok = await runInBackground { MaintenanceEngine.snapshot() }
+            notify(ok ? "Instantané créé" : "Instantané impossible (Time Machine désactivé ?)")
+        }
+    }
+
     func restore(_ q: QuarantineItem) {
         Task {
             await runInBackground { ThreatEngine.restore(q) }

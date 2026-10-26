@@ -353,12 +353,7 @@ struct ToolsView: View {
                             IconBubble(symbol: "clock.arrow.circlepath", color: Palette.success)
                             Strong("Point de restauration")
                             Muted("Crée un instantané Time Machine local avant une grosse modification.")
-                            Button("Créer maintenant") {
-                                Task {
-                                    let ok = await runInBackground { MaintenanceEngine.snapshot() }
-                                    model.notify(ok ? "Instantané créé" : "Instantané impossible (Time Machine désactivé ?)")
-                                }
-                            }
+                            Button("Créer maintenant") { model.createSnapshot() }
                             .buttonStyle(GlassButtonStyle())
                         }
                     }

@@ -209,14 +209,16 @@ struct ProtectView: View {
                         Spacer()
                     }
                 }
-                SecurityRow(title: "Pare-feu", detail: "Bloque les connexions entrantes non autorisées.", ok: s.firewall, action: s.firewall ? nil : ("Activer", { model.enableFirewall() }))
-                SecurityRow(title: "Gatekeeper", detail: "N'autorise que les applications vérifiées.", ok: s.gatekeeper, action: s.gatekeeper ? nil : ("Réactiver", {
-                    Task { _ = await runInBackground { SecurityEngine.enableGatekeeper() }; model.loadSecurity() }
-                }))
-                SecurityRow(title: "FileVault", detail: "Chiffre le disque si le Mac est volé.", ok: s.fileVault, action: s.fileVault ? nil : ("Ouvrir", { SecurityEngine.openFileVault() }))
-                SecurityRow(title: "Protection de l'intégrité du système", detail: "Empêche la modification de macOS.", ok: s.sip, action: nil)
+                SecurityRow(title: "Pare-feu", detail: "Bloque les connexions entrantes non autorisées.", ok: s.firewall,
+                            actionTitle: "Activer") { model.enableFirewall() }
+                SecurityRow(title: "Gatekeeper", detail: "N'autorise que les applications vérifiées.", ok: s.gatekeeper,
+                            actionTitle: "Réactiver") { model.enableGatekeeper() }
+                SecurityRow(title: "FileVault", detail: "Chiffre le disque si le Mac est volé.", ok: s.fileVault,
+                            actionTitle: "Ouvrir") { SecurityEngine.openFileVault() }
+                SecurityRow(title: "Protection de l'intégrité du système", detail: "Empêche la modification de macOS.", ok: s.sip,
+                            actionTitle: nil) {}
                 SecurityRow(title: "Mises à jour automatiques", detail: "macOS se protège contre les nouvelles failles.", ok: s.autoUpdates,
-                            action: s.autoUpdates ? nil : ("Ouvrir", { Links.open(URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")!) }))
+                            actionTitle: "Ouvrir") { Links.open(URL(string: "x-apple.systempreferences:com.apple.preferences.softwareupdate")!) }
             } else {
                 LoadingCard(text: "Vérification de la sécurité…")
             }
@@ -263,9 +265,7 @@ struct ProtectView: View {
                         Muted("Envoie des rapports d'utilisation de votre Mac.", size: 11.5)
                     }
                     Spacer()
-                    Button("Désactiver") {
-                        Task { let ok = await runInBackground { SecurityEngine.disableAnalyticsSharing() }; if ok { model.notify("Partage d'analyses désactivé") } }
-                    }
+                    Button("Désactiver") { model.disableAnalytics() }
                     .buttonStyle(GlassButtonStyle())
                 }
             }
@@ -345,7 +345,8 @@ struct SecurityRow: View {
     let title: String
     let detail: String
     let ok: Bool
-    let action: (String, () -> Void)?
+    let actionTitle: String?
+    let action: () -> Void
     var body: some View {
         GlassCard(padding: 14) {
             HStack(spacing: 12) {
@@ -357,8 +358,8 @@ struct SecurityRow: View {
                 }
                 Spacer()
                 Tag(text: ok ? "Activé" : "Désactivé", color: ok ? Palette.success : Palette.warning)
-                if let action {
-                    Button(action.0, action: action.1).buttonStyle(PrimaryButtonStyle())
+                if !ok, let actionTitle {
+                    Button(actionTitle, action: action).buttonStyle(PrimaryButtonStyle())
                 }
             }
         }
