@@ -280,7 +280,7 @@ enum ThreatEngine {
                     sev = .high; why = "Programme caché"
                 } else if !program.isEmpty, FS.fm.fileExists(atPath: program), !program.hasPrefix("/System"), !program.hasPrefix("/usr/bin"),
                           !program.hasPrefix("/bin"), !isSigned(program) {
-                    sev = full ? .medium : .check; why = "Programme non signé lancé automatiquement"
+                    sev = .check; why = "Programme non signé lancé automatiquement"
                 }
                 if let sev {
                     var paths = [plist]

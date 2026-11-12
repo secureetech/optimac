@@ -98,7 +98,7 @@ struct RadarView: View {
     }
 }
 
-/// Bouclier qui tourne sur lui-même en 3D.
+/// Bouclier qui pivote en 3D (plus vite pendant une analyse).
 struct Shield3D: View {
     var color: Color = Palette.success
     var symbol = "checkmark.shield.fill"
@@ -114,8 +114,8 @@ struct Shield3D: View {
                 .font(.system(size: size * 0.78, weight: .bold))
                 .foregroundColor(color)
                 .shadow(color: color.opacity(0.6), radius: 8, x: 0, y: 4)
-                .rotation3DEffect(.degrees(turn ? 360 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
-                .animation(spinning ? .easeInOut(duration: 3.2).repeatForever(autoreverses: false) : .default, value: turn)
+                .rotation3DEffect(.degrees(turn ? 32 : -32), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
+                .animation(.easeInOut(duration: spinning ? 0.9 : 2.6).repeatForever(autoreverses: true), value: turn)
         }
         .frame(width: size * 1.2, height: size * 1.2)
         .onAppear { turn = true }
