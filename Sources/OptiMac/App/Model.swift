@@ -71,6 +71,7 @@ final class Model: ObservableObject {
     @Published var premiumFeature: PremiumFeature?
     @Published var showPremium = false
     @Published var showCallback = false
+    @Published var showUpdate = false
     @Published var toast: String?
     @Published var working: String?
 

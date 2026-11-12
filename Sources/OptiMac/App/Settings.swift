@@ -53,7 +53,6 @@ final class AppSettings: ObservableObject {
     @Published var appearance: AppearanceMode { didSet { d.set(appearance.rawValue, forKey: "appearance"); applyAppearance() } }
     @Published var textSize: TextSize { didSet { d.set(textSize.rawValue, forKey: "textSize") } }
     @Published var launchAtLogin: Bool { didSet { d.set(launchAtLogin, forKey: "launchAtLogin"); StartupEngine.setLaunchAtLogin(launchAtLogin) } }
-    @Published var openWindowAtLogin: Bool { didSet { d.set(openWindowAtLogin, forKey: "openWindowAtLogin") } }
     @Published var weeklyCheck: Bool { didSet { d.set(weeklyCheck, forKey: "weeklyCheck") } }
     @Published var notifPremium: Bool { didSet { d.set(notifPremium, forKey: "notifPremium") } }
     @Published var notifCleanDone: Bool { didSet { d.set(notifCleanDone, forKey: "notifCleanDone") } }
@@ -71,7 +70,6 @@ final class AppSettings: ObservableObject {
         appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .light
         textSize = TextSize(rawValue: d.string(forKey: "textSize") ?? "") ?? .normal
         launchAtLogin = d.object(forKey: "launchAtLogin") as? Bool ?? true
-        openWindowAtLogin = d.object(forKey: "openWindowAtLogin") as? Bool ?? true
         weeklyCheck = d.object(forKey: "weeklyCheck") as? Bool ?? true
         notifPremium = d.object(forKey: "notifPremium") as? Bool ?? true
         notifCleanDone = d.object(forKey: "notifCleanDone") as? Bool ?? true

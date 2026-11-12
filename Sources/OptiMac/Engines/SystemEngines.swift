@@ -156,20 +156,42 @@ enum StartupEngine {
         try? FS.fm.removeItem(at: origin)
     }
 
-    // MARK: Lancement d'OptiMac à l'ouverture de session (compatible macOS 11)
+    // MARK: OptiMac toujours actif (agent launchd, compatible macOS 11)
 
-    static var selfAgent: URL { FS.lib("LaunchAgents/com.secureetech.optimac.plist") }
+    static let selfLabel = "com.secureetech.optimac"
+    static var selfAgent: URL { FS.lib("LaunchAgents/\(selfLabel).plist") }
+    private static var selfTarget: String { "gui/\(getuid())/\(selfLabel)" }
 
-    static func setLaunchAtLogin(_ on: Bool) {
-        if on {
-            guard let exe = Bundle.main.executableURL?.path else { return }
-            let plist: [String: Any] = ["Label": "com.secureetech.optimac", "ProgramArguments": [exe, "--login"],
-                                        "RunAtLoad": true, "LimitLoadToSessionType": "Aqua"]
-            FS.ensureDir(selfAgent.deletingLastPathComponent())
-            (plist as NSDictionary).write(to: selfAgent, atomically: true)
-        } else {
+    /// Écrit (ou retire) l'agent qui lance OptiMac à l'ouverture de session et le relance s'il s'arrête.
+    /// Renvoie vrai si le fichier a changé (nouvelle version, nouvel emplacement).
+    @discardableResult
+    static func setLaunchAtLogin(_ on: Bool) -> Bool {
+        guard on, let exe = Bundle.main.executableURL?.path else {
+            let existed = FS.exists(selfAgent)
             try? FS.fm.removeItem(at: selfAgent)
+            return existed
         }
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        let plist: [String: Any] = ["Label": selfLabel, "ProgramArguments": [exe, "--login"],
+                                    "RunAtLoad": true, "KeepAlive": true, "ThrottleInterval": 10,
+                                    "LimitLoadToSessionType": "Aqua", "ProcessType": "Interactive",
+                                    "EnvironmentVariables": ["OPTIMAC_BUILD": "\(SystemInfo.appVersion)-\(build)"]]
+        if let current = NSDictionary(contentsOf: selfAgent), current.isEqual(to: plist) { return false }
+        FS.ensureDir(selfAgent.deletingLastPathComponent())
+        (plist as NSDictionary).write(to: selfAgent, atomically: true)
+        return true
+    }
+
+    /// Démarre l'agent tout de suite (sans attendre la prochaine ouverture de session).
+    static func startAgent(reload: Bool) {
+        if reload { Shell.run("/bin/launchctl", ["bootout", selfTarget], timeout: 15) }
+        Shell.run("/bin/launchctl", ["enable", selfTarget], timeout: 15)
+        Shell.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", selfAgent.path], timeout: 15)
+    }
+
+    /// Arrêt complet : macOS ne relance plus OptiMac avant la prochaine ouverture de session.
+    static func stopAgent() {
+        Shell.run("/bin/launchctl", ["bootout", selfTarget], timeout: 15)
     }
 }
 

@@ -88,8 +88,17 @@ struct SettingsView: View {
                 GlassCard {
                     VStack(alignment: .leading, spacing: 12) {
                         Strong("Démarrage et automatismes")
-                        toggle("Lancer OptiMac à l'ouverture de session", $settings.launchAtLogin)
-                        toggle("Ouvrir la fenêtre au démarrage du Mac", $settings.openWindowAtLogin)
+                        toggle("Garder OptiMac toujours actif (démarrage du Mac, relance automatique)", $settings.launchAtLogin)
+                        HStack {
+                            Muted("OptiMac démarre sans fenêtre, près de l'horloge. Fermer ou quitter ne coupe pas la protection.", size: 11.5)
+                            Spacer()
+                            Button("Arrêter complètement OptiMac") {
+                                if Confirm.ask("Arrêter complètement OptiMac ?", "La protection, les alertes et le nettoyage automatique s'arrêtent jusqu'au prochain démarrage du Mac.", ok: "Arrêter", danger: true) {
+                                    (NSApp.delegate as? AppDelegate)?.quitCompletely()
+                                }
+                            }
+                            .buttonStyle(GlassButtonStyle(danger: true))
+                        }
                         toggle("Vérification de sécurité chaque semaine", $settings.weeklyCheck)
                         row("Nettoyage automatique") {
                             HStack(spacing: 6) {
@@ -160,7 +169,7 @@ struct SettingsView: View {
                             }
                             Spacer()
                             if let v = updater.latest, let u = updater.url {
-                                Button("Installer la version \(v)") { Links.open(u) }.buttonStyle(PrimaryButtonStyle())
+                                Button("Installer la version \(v)") { Links.open(u) }.buttonStyle(PrimaryButtonStyle()).help(updater.notes ?? "")
                             } else {
                                 Button("Rechercher une mise à jour") {
                                     Task {
@@ -404,6 +413,44 @@ struct Offer: Identifiable {
         Offer(id: "duo", name: "2 produits ou 2 postes", price: "179,90 €", period: "TTC / an", detail: "2 licences Premium — soit 14,99 € par mois", badge: nil,
               link: "https://buy.stripe.com/5kQ28s3zz320brue5S7AL2E?client_reference_id=src_direct")
     ]
+}
+
+// MARK: - Mise à jour disponible
+
+struct UpdateSheet: View {
+    @EnvironmentObject var model: Model
+    @EnvironmentObject var updater: Updater
+    @Environment(\.palette) private var p
+
+    var body: some View {
+        Modal(width: 500, onClose: { model.showUpdate = false }) {
+            VStack(spacing: 16) {
+                ZStack {
+                    Orbit3D(size: 130, speed: 1.4)
+                    Logo(size: 64)
+                }
+                .frame(height: 130)
+                Text("Une nouvelle version d'OptiMac est prête")
+                    .font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundColor(p.text)
+                    .multilineTextAlignment(.center)
+                Tag(text: "Version \(updater.latest ?? "") — vous avez la \(SystemInfo.appVersion)")
+                if let n = updater.notes, !n.isEmpty {
+                    Muted(n, size: 13).multilineTextAlignment(.center)
+                }
+                Button(action: {
+                    if let u = updater.url { Links.open(u) }
+                    model.showUpdate = false
+                }) {
+                    HStack(spacing: 8) { Image(systemName: "arrow.down.circle.fill"); Text("Télécharger la mise à jour") }
+                }
+                .buttonStyle(PrimaryButtonStyle(large: true))
+                Muted("Ouvrez le fichier téléchargé, puis OptiMac : il s'installe tout seul à la place de l'ancienne version.", size: 11.5)
+                    .multilineTextAlignment(.center)
+                Button("Plus tard") { model.showUpdate = false }.buttonStyle(GlassButtonStyle())
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
 }
 
 // MARK: - Rappel par un technicien

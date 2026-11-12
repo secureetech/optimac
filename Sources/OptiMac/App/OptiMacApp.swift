@@ -37,9 +37,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         NSApp.setActivationPolicy(.regular)
         settings.applyAppearance()
         if SelfInstall.offerIfNeeded() {
+            allowQuit = true
             NSApp.terminate(nil)
             return
         }
+
+        // OptiMac permanent : c'est l'agent lancé par macOS (« --login ») qui reste actif en continu.
+        // Ouvert à la main, OptiMac passe le relais à cet agent et lui demande d'afficher la fenêtre.
+        let atLogin = CommandLine.arguments.contains("--login")
+        if !atLogin && handOffToAgent() {
+            allowQuit = true
+            NSApp.terminate(nil)
+            return
+        }
+        if atLogin && settings.launchAtLogin { StartupEngine.setLaunchAtLogin(true) }
+
         installErrorReporting()
         buildMenu()
         buildStatusItem()
@@ -47,22 +59,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         Notifier.requestPermission()
         remoteWatch.start(settings: settings)
 
-        // Lancement à l'ouverture de session (agent LaunchAgents, compatible macOS 11)
-        if settings.launchAtLogin { StartupEngine.setLaunchAtLogin(true) }
-
-        let atLogin = CommandLine.arguments.contains("--login")
-        if !atLogin || settings.openWindowAtLogin {
-            showWindow()
-        } else {
-            NSApp.setActivationPolicy(.accessory)
+        DistributedNotificationCenter.default().addObserver(forName: AppDelegate.showRequest, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.showWindow() }
         }
+        // Extinction, redémarrage ou fermeture de session : là, OptiMac doit vraiment se fermer.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.allowQuit = true }
+        }
+
+        // Démarrage silencieux : au démarrage du Mac, seule l'icône près de l'horloge apparaît.
+        if atLogin { NSApp.setActivationPolicy(.accessory) } else { showWindow() }
 
         Task {
             await license.bootstrap()
-            await updater.check()
-            if let v = updater.latest {
-                Notifier.post("Mise à jour d'OptiMac disponible", "La version \(v) est prête. Ouvrez OptiMac › Paramètres pour l'installer.")
-            }
+            await checkForUpdate()
             if atLogin {
                 if settings.notifStartup && !license.isPremium {
                     Notifier.post("OptiMac veille sur votre Mac", "Lancez une analyse pour voir ce qui peut être nettoyé.")
@@ -77,8 +87,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             Task { @MainActor in
                 strong.model.backgroundTick()
                 await strong.license.heartbeat()
+                await strong.checkForUpdate()
             }
         }
+    }
+
+    // MARK: Toujours actif
+
+    static let showRequest = Notification.Name("com.secureetech.optimac.show")
+    /// Vrai seulement quand OptiMac doit réellement se fermer (arrêt du Mac, arrêt complet demandé, installation).
+    var allowQuit = false
+
+    private func otherInstances() -> [NSRunningApplication] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? StartupEngine.selfLabel)
+            .filter { $0.processIdentifier != getpid() }
+    }
+
+    /// Passe le relais à l'agent permanent. Renvoie faux si OptiMac doit continuer lui-même
+    /// (option désactivée, pas installé dans Applications, ou macOS refuse l'agent).
+    private func handOffToAgent() -> Bool {
+        guard settings.launchAtLogin, SelfInstall.isInstalled else { return false }
+        let changed = StartupEngine.setLaunchAtLogin(true)
+        if changed || CommandLine.arguments.contains("--fresh") {
+            // Nouvelle version ou nouvel emplacement : l'ancienne copie laisse sa place.
+            for other in otherInstances() { other.forceTerminate() }
+            StartupEngine.startAgent(reload: true)
+        } else if otherInstances().isEmpty {
+            StartupEngine.startAgent(reload: false)
+        }
+        for _ in 0..<24 {
+            if !otherInstances().isEmpty {
+                Thread.sleep(forTimeInterval: 1.2)
+                DistributedNotificationCenter.default().postNotificationName(AppDelegate.showRequest, object: nil, userInfo: nil, deliverImmediately: true)
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return false
+    }
+
+    /// Cmd+Q et « Quitter » ferment seulement la fenêtre : la protection continue près de l'horloge.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if allowQuit { return .terminateNow }
+        window?.close()
+        NSApp.setActivationPolicy(.accessory)
+        return .terminateCancel
+    }
+
+    /// Arrêt complet demandé dans les Paramètres.
+    func quitCompletely() {
+        allowQuit = true
+        StartupEngine.stopAgent()
+        NSApp.terminate(nil)
+    }
+
+    /// Recherche une nouvelle version ; la fenêtre de mise à jour s'affiche au plus une fois par jour.
+    func checkForUpdate() async {
+        await updater.check()
+        guard let v = updater.latest else { return }
+        let last = settings.date("lastUpdatePrompt") ?? .distantPast
+        guard Date().timeIntervalSince(last) > 86400 else { return }
+        settings.setDate("lastUpdatePrompt", Date())
+        Notifier.post("Mise à jour d'OptiMac disponible", "La version \(v) est prête à être installée.")
+        Sound.found.play()
+        model.showUpdate = true
+        showWindow()
     }
 
     // MARK: Fenêtre
@@ -154,8 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         menu.addItem(.separator())
         menu.addItem(withTitle: "Être rappelé par un technicien", action: #selector(menuCallback), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Passer à Premium", action: #selector(menuPremium), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quitter OptiMac", action: #selector(menuQuit), keyEquivalent: "q").target = self
         item.menu = menu
         statusItem = item
     }
@@ -166,7 +237,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     @objc private func menuMemory() { model.freeMemory() }
     @objc private func menuCallback() { showWindow(); model.showCallback = true }
     @objc private func menuPremium() { showWindow(); model.premiumFeature = nil; model.showPremium = true }
-    @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuAbout() { showWindow(); model.section = .settings }
     @objc private func menuSettings() { showWindow(); model.section = .settings }
 
@@ -182,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         appMenu.addItem(withTitle: "Paramètres…", action: #selector(menuSettings), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Masquer OptiMac", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quitter OptiMac", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Fermer OptiMac (reste actif près de l'horloge)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem()

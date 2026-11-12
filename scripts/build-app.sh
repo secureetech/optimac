@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fabrique OptiMac.app (universelle Intel + Apple Silicon) puis OptiMac.dmg.
 set -euo pipefail
-VERSION="${VERSION:-1.1.2}"
+VERSION="${VERSION:-1.2.0}"
 BUILD="${BUILD:-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

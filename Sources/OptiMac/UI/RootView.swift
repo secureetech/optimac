@@ -44,6 +44,9 @@ struct RootView: View {
             if model.showCallback {
                 CallbackSheet().transition(.opacity)
             }
+            if model.showUpdate {
+                UpdateSheet().transition(.opacity)
+            }
             if !settings.welcomeShown {
                 WelcomeSheet().transition(.opacity)
             }
@@ -52,6 +55,7 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: model.working)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: model.showPremium)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: model.showCallback)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: model.showUpdate)
         .font(.system(size: 13 * settings.textSize.scale))
         .frame(minWidth: 1080, minHeight: 720)
         .edgesIgnoringSafeArea(.all)

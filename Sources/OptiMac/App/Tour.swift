@@ -6,6 +6,7 @@ import SwiftUI
 extension AppDelegate {
     func runTour(into dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        allowQuit = true
         settings.welcomeShown = true
         settings.appearance = .light
         settings.applyAppearance()

@@ -40,7 +40,7 @@ enum SelfInstall {
         }
         // Sans cette étiquette de téléchargement, macOS ouvre la copie sans nouvel avertissement.
         Shell.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target.path])
-        Shell.run("/usr/bin/open", ["-n", target.path])
+        Shell.run("/usr/bin/open", ["-n", target.path, "--args", "--fresh"])
         return true
     }
 }
