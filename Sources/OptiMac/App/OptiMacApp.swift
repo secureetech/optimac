@@ -36,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         }
         NSApp.setActivationPolicy(.regular)
         settings.applyAppearance()
+        if SelfInstall.offerIfNeeded() {
+            NSApp.terminate(nil)
+            return
+        }
         installErrorReporting()
         buildMenu()
         buildStatusItem()
