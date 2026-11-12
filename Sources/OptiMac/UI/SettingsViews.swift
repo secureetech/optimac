@@ -401,7 +401,7 @@ struct Offer: Identifiable {
               link: "https://buy.stripe.com/14A28sgml0TScvy1j67AL2C?client_reference_id=src_direct"),
         Offer(id: "annuel", name: "Annuel", price: "99,80 €", period: "TTC / an", detail: "Soit 8,32 € par mois — économisez 40 %", badge: "Le plus choisi",
               link: "https://buy.stripe.com/eVq8wQ1rr7ig2UY0f27AL2D?client_reference_id=src_direct"),
-        Offer(id: "duo", name: "2 produits ou 2 ordinateurs", price: "179,90 €", period: "TTC / an", detail: "2 licences Premium — soit 14,99 € par mois", badge: nil,
+        Offer(id: "duo", name: "2 produits ou 2 postes", price: "179,90 €", period: "TTC / an", detail: "2 licences Premium — soit 14,99 € par mois", badge: nil,
               link: "https://buy.stripe.com/5kQ28s3zz320brue5S7AL2E?client_reference_id=src_direct")
     ]
 }
