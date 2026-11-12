@@ -16,6 +16,7 @@
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSPrincipalClass</key><string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key><string>© 2026 H2OCONSULTING - FZCO · SecureeTech</string>
+	<key>NSLocalNetworkUsageDescription</key><string>OptiMac recherche les appareils connectés à votre réseau (box, téléphones, imprimantes) pour repérer un appareil inconnu.</string>
 	<key>NSAppleEventsUsageDescription</key><string>OptiMac gère les éléments qui s'ouvrent au démarrage de votre Mac.</string>
 </dict>
 </plist>

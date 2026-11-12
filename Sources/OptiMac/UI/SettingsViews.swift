@@ -120,6 +120,17 @@ struct SettingsView: View {
                 }
                 .appear(4)
 
+                // Sons et protection contre les arnaques
+                GlassCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Strong("Sons et alertes")
+                        toggle("Sons et vibrations de l'interface", $settings.sounds)
+                        toggle("M'alerter quand un logiciel de prise en main à distance s'ouvre (anti-arnaque)", $settings.remoteAlert)
+                        Muted("L'assistance SecureeTech est reconnue automatiquement et ne déclenche jamais cette alerte.", size: 11.5)
+                    }
+                }
+                .appear(5)
+
                 // Accès complet au disque
                 GlassCard(tint: Permissions.hasFullDiskAccess ? Palette.success : Palette.warning) {
                     HStack(spacing: 12) {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Fabrique OptiMac.app (universelle Intel + Apple Silicon) puis OptiMac.dmg.
 set -euo pipefail
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 BUILD="${BUILD:-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -14,6 +14,8 @@ rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Co
 cp "$BIN" "$APP/Contents/MacOS/OptiMac"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 cp Resources/logo.png "$APP/Contents/Resources/logo.png"
+cp -R Resources/Sounds "$APP/Contents/Resources/Sounds"
+cp Resources/signatures.json "$APP/Contents/Resources/signatures.json"
 
 # Icône de l'application à partir du logo
 ICONSET="dist/AppIcon.iconset"; mkdir -p "$ICONSET"
@@ -32,10 +34,15 @@ if [ -n "$CONC" ]; then cp "$CONC" "$APP/Contents/Frameworks/"; echo "Concurrenc
 codesign --force --deep --sign - "$APP"
 codesign --verify --verbose "$APP"
 lipo -info "$APP/Contents/MacOS/OptiMac"
+# Contrôle de compatibilité : version minimale de macOS inscrite dans le programme (attendu : 11.0).
+for A in arm64 x86_64; do echo "minos $A : $(vtool -arch $A -show-build "$APP/Contents/MacOS/OptiMac" | awk '/minos/{print $2}')"; done
+otool -L "$APP/Contents/MacOS/OptiMac" | grep -i concurrency || true
 
 # Image disque avec raccourci vers Applications
 STAGE="dist/dmg"; mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "OptiMac" -srcfolder "$STAGE" -ov -format UDZO "dist/OptiMac-$VERSION.dmg"
+hdiutil create -volname "OptiMac" -srcfolder "$STAGE" -ov -format UDZO "dist/OptiMac.dmg"
+# Ancien nom conservé : les liens de téléchargement déjà diffusés continuent de fonctionner.
+cp dist/OptiMac.dmg dist/OptiMac-1.0.0.dmg
 ls -la dist

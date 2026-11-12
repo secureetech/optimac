@@ -181,7 +181,7 @@ struct SidebarItem: View {
 
     var body: some View {
         let selected = model.section == section
-        Button(action: { model.section = section }) {
+        Button(action: { if model.section != section { Sound.whoosh.play() }; model.section = section }) {
             HStack(spacing: 11) {
                 Image(systemName: section.icon)
                     .font(.system(size: 14, weight: .semibold))

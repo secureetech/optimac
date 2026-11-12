@@ -64,17 +64,43 @@ struct NetworkView: View {
                                 Button("Rechercher") { model.scanNetwork() }.buttonStyle(PrimaryButtonStyle())
                             }
                         }
-                        if model.netLoading { GlowBar(value: model.netProgress) }
-                        ForEach(model.devices) { d in
+                        if model.netLoading {
+                            HStack(spacing: 20) {
+                                RadarView(size: 110, color: Palette.blue)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Strong("Recherche des appareils…")
+                                    GlowBar(value: model.netProgress, color: Palette.blue)
+                                    Muted("OptiMac interroge chaque adresse de votre réseau, trois fois de suite.", size: 11.5)
+                                }
+                            }
+                        }
+                        if model.netBlocked && !model.netLoading {
                             HStack(spacing: 12) {
-                                IconBubble(symbol: d.isGateway ? "antenna.radiowaves.left.and.right" : (d.isSelf ? "laptopcomputer" : "dot.radiowaves.left.and.right"),
-                                           color: d.isGateway ? Palette.accent : (d.isSelf ? Palette.success : Palette.blue), size: 30)
+                                IconBubble(symbol: "lock.shield", color: Palette.warning, size: 32)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Strong("macOS n'a laissé voir aucun appareil", size: 13)
+                                    Muted("Autorisez OptiMac dans Réglages › Confidentialité et sécurité › Réseau local, puis relancez la recherche.", size: 11.5)
+                                }
+                                Spacer()
+                                Button("Ouvrir les réglages") {
+                                    Links.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!)
+                                }
+                                .buttonStyle(GlassButtonStyle())
+                            }
+                        }
+                        ForEach(Array(model.devices.enumerated()), id: \.element.id) { i, d in
+                            HStack(spacing: 12) {
+                                IconBubble(symbol: d.symbol, color: d.isGateway ? Palette.accent : (d.isSelf ? Palette.success : (d.isNew ? Palette.warning : Palette.blue)), size: 32)
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Strong(d.name, size: 13)
+                                    HStack(spacing: 6) {
+                                        Strong(d.name, size: 13)
+                                        if d.isNew { Tag(text: "Nouveau", color: Palette.warning) }
+                                    }
                                     Muted(d.mac.isEmpty ? d.ip : "\(d.ip) · \(d.mac)", size: 11)
                                 }
                                 Spacer()
                             }
+                            .appear(min(i, 14))
                         }
                         if !model.netLoading && !model.devices.isEmpty {
                             Muted("\(model.devices.count) appareil(s) trouvé(s).")

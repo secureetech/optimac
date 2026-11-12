@@ -9,7 +9,7 @@ struct Threat: Identifiable, Hashable {
             switch self { case .high: return "Élevé"; case .medium: return "Moyen"; case .check: return "À vérifier" }
         }
     }
-    enum Kind: String { case launchItem, app, profile, extensionItem, cron, hosts, process }
+    enum Kind: String { case launchItem, app, profile, extensionItem, cron, hosts, process, file, proxy }
 
     let id: String
     let name: String
@@ -30,9 +30,10 @@ struct QuarantineItem: Codable, Identifiable {
     let date: Date
 }
 
-/// Analyse anti-malware pour Mac : adwares, faux optimiseurs, agents de lancement suspects,
-/// profils de configuration, extensions qui détournent la recherche, tâches planifiées,
-/// fichier hosts et logiciels de prise en main à distance.
+/// Analyse anti-malware pour Mac. Elle ouvre réellement les fichiers : programmes cachés ou non signés,
+/// scripts dangereux (règles de contenu), empreintes connues, faux installateurs, adwares, agents de
+/// lancement, profils, extensions, tâches planifiées, fichier hosts, proxy et prise en main à distance.
+/// Les logiciels SecureeTech et l'assistance SecureeTech sont en liste blanche (voir Whitelist).
 enum ThreatEngine {
     static let adwarePatterns = [
         "mackeeper", "advanced mac cleaner", "advancedmaccleaner", "mac auto fixer", "macautofixer", "mac cleanup pro",
@@ -44,6 +45,9 @@ enum ThreatEngine {
         "isearch", "searchpulse", "searchalgo", "chill tab", "chilltab", "spaceship", "tabsearch", "results-hub"
     ]
 
+    /// Familles d'adwares recherchées à l'intérieur même des programmes non signés.
+    static let adwareFamilies = ["pirrit", "genieo", "bundlore", "adload", "shlayer", "mughthesec", "vsearch", "crossrider"]
+
     static let remoteTools = [
         ("AnyDesk", "anydesk"), ("TeamViewer", "teamviewer"), ("RustDesk", "rustdesk"), ("UltraViewer", "ultraviewer"),
         ("Splashtop", "splashtop"), ("LogMeIn", "logmein"), ("ConnectWise / ScreenConnect", "screenconnect"),
@@ -51,37 +55,193 @@ enum ThreatEngine {
         ("AeroAdmin", "aeroadmin"), ("Ammyy Admin", "ammyy"), ("ISL Light", "isl light"), ("GoTo Resolve", "gotoresolve"),
         ("GoToAssist", "gotoassist"), ("Remote Utilities", "remote utilities"), ("Chrome Remote Desktop", "chromoting"),
         ("DWService", "dwagent"), ("HopToDesk", "hoptodesk"), ("Getscreen", "getscreen"), ("RemotePC", "remotepc"),
-        ("Iperius Remote", "iperius"), ("BeAnywhere", "beanywhere"), ("NinjaOne", "ninjarmm"), ("Atera", "atera")
+        ("Iperius Remote", "iperius"), ("BeAnywhere", "beanywhere"), ("NinjaOne", "ninjarmm"), ("Atera", "atera"),
+        ("MeshCentral", "meshagent")
     ]
+
+    private static var extraNames: [String] = []
 
     static func isAdware(_ s: String) -> Bool {
         let l = s.lowercased()
-        return adwarePatterns.contains { l.contains($0) }
+        return adwarePatterns.contains { l.contains($0) } || extraNames.contains { l.contains($0) }
     }
 
-    static func scan(full: Bool, step: @escaping (String, Double) -> Void, cancelled: @escaping () -> Bool) -> [Threat] {
-        var out: [Threat] = []
+    /// Outil de prise en main à distance reconnu dans un nom, hors liste blanche SecureeTech.
+    static func remoteTool(in text: String) -> String? {
+        let l = text.lowercased()
+        guard let tool = remoteTools.first(where: { l.contains($0.1) }) else { return nil }
+        return Whitelist.contains(l) ? nil : tool.0
+    }
+
+    // MARK: Analyse
+
+    private enum Zone { case loose, bundle, system }
+    private struct Root { let label: String; let url: URL; let zone: Zone; let depth: Int? }
+
+    private static func roots(full: Bool) -> [Root] {
+        let h = FS.home
+        var r = [
+            Root(label: "Téléchargements", url: h.appendingPathComponent("Downloads"), zone: .loose, depth: full ? nil : 3),
+            Root(label: "Dossier partagé", url: URL(fileURLWithPath: "/Users/Shared"), zone: .loose, depth: full ? nil : 4),
+            Root(label: "Fichiers temporaires", url: URL(fileURLWithPath: "/private/tmp"), zone: .loose, depth: 4),
+            Root(label: "Fichiers temporaires", url: URL(fileURLWithPath: "/private/var/tmp"), zone: .loose, depth: 4),
+            Root(label: "Données des applications", url: FS.lib("Application Support"), zone: .loose, depth: full ? 6 : 2),
+            Root(label: "Applications", url: URL(fileURLWithPath: "/Applications"), zone: .bundle, depth: full ? nil : 4)
+        ]
+        if full {
+            r += [
+                Root(label: "Bureau", url: h.appendingPathComponent("Desktop"), zone: .loose, depth: nil),
+                Root(label: "Documents", url: h.appendingPathComponent("Documents"), zone: .loose, depth: 8),
+                Root(label: "Applications de l'utilisateur", url: h.appendingPathComponent("Applications"), zone: .bundle, depth: nil),
+                Root(label: "Bibliothèque de l'utilisateur", url: h.appendingPathComponent("Library"), zone: .system, depth: 5),
+                Root(label: "Bibliothèque du Mac", url: URL(fileURLWithPath: "/Library/Application Support"), zone: .system, depth: 5),
+                Root(label: "Outils système ajoutés", url: URL(fileURLWithPath: "/Library/PrivilegedHelperTools"), zone: .system, depth: 2),
+                Root(label: "Programmes ajoutés", url: URL(fileURLWithPath: "/usr/local"), zone: .system, depth: 5),
+                Root(label: "Programmes ajoutés", url: URL(fileURLWithPath: "/opt"), zone: .system, depth: 5)
+            ]
+        }
+        return r.filter { FS.exists($0.url) }
+    }
+
+    static func scan(full: Bool, progress: ScanProgress, cancelled: @escaping () -> Bool) -> [Threat] {
+        progress.set(local: 0, label: "Mise à jour de la base de signatures")
+        Signatures.refresh()
+        let sig = Signatures.load()
+        extraNames = sig.names
         let ignored = Set(UserDefaults.standard.stringArray(forKey: "ignoredThreats") ?? [])
-        let steps: [(String, () -> [Threat])] = [
-            ("Agents de lancement", { launchItems(full: full) }),
-            ("Applications installées", { apps() }),
+
+        var steps: [(String, () -> [Threat])] = [
+            ("Agents de lancement", { launchItems(full: full, sig: sig, progress: progress) }),
+            ("Applications installées", { apps(full: full, progress: progress, cancelled: cancelled) }),
+            ("Processus actifs", { processes() }),
+            ("Prise en main à distance", { remoteAccess() })
+        ]
+        for root in roots(full: full) {
+            steps.append(("Analyse des fichiers : \(root.label)", { files(root, full: full, sig: sig, progress: progress, cancelled: cancelled) }))
+        }
+        steps += [
             ("Profils de configuration", { profiles() }),
             ("Extensions des navigateurs", { browserExtensions() }),
             ("Tâches planifiées", { cron() }),
             ("Fichier hosts", { hosts() }),
-            ("Processus actifs", { processes() }),
-            ("Prise en main à distance", { remoteAccess() })
+            ("Proxy internet", { proxy() })
         ]
+
+        var out: [Threat] = []
         for (i, s) in steps.enumerated() {
             if cancelled() { break }
-            step(s.0, Double(i) / Double(steps.count))
+            progress.set(local: Double(i) / Double(steps.count), label: s.0)
             out.append(contentsOf: s.1())
-            if full { Thread.sleep(forTimeInterval: 0.4) }
         }
-        step("Terminé", 1)
+        progress.set(local: 1, label: "Terminé")
         var seen = Set<String>()
         return out.filter { !ignored.contains($0.id) && seen.insert($0.id).inserted }
                   .sorted { $0.severity > $1.severity }
+    }
+
+    // MARK: Fichiers
+
+    private static let skippedDirs: Set<String> = ["node_modules", ".git", "Caches", "Photos Library.photoslibrary", "Mail", "Messages",
+                                                   "MobileSync", "CloudStorage", "Mobile Documents", ".Trash", "Quarantaine"]
+    private static let scriptExts: Set<String> = ["sh", "command", "tool", "bash", "zsh", "py", "pl", "rb", "scpt", "applescript", "js"]
+    private static let installerExts: Set<String> = ["dmg", "pkg", "mpkg", "zip", "iso"]
+    private static let machMagics: Set<UInt32> = [0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE, 0xBEBAFECA]
+
+    private static func files(_ root: Root, full: Bool, sig: Signatures, progress: ScanProgress, cancelled: () -> Bool) -> [Threat] {
+        var out: [Threat] = []
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isExecutableKey, .fileSizeKey]
+        let keySet = Set(keys)
+        guard let en = FS.fm.enumerator(at: root.url, includingPropertiesForKeys: keys, options: [], errorHandler: { _, _ in true }) else { return [] }
+        var n = 0
+        for case let u as URL in en {
+            if let d = root.depth, en.level > d { en.skipDescendants(); continue }
+            n += 1
+            if n % 64 == 0 && cancelled() { break }
+            guard let v = try? u.resourceValues(forKeys: keySet) else { continue }
+            if v.isDirectory == true {
+                if skippedDirs.contains(u.lastPathComponent) { en.skipDescendants() }
+                continue
+            }
+            guard v.isRegularFile == true else { continue }
+            progress.tick(u.path)
+            if let t = inspect(u, v, zone: root.zone, full: full, sig: sig) { out.append(t) }
+        }
+        return out
+    }
+
+    private static func shortPath(_ u: URL) -> String { u.path.replacingOccurrences(of: FS.home.path, with: "~") }
+
+    private static func fileThreat(_ u: URL, _ name: String, _ sev: Threat.Severity, _ detail: String, type: String = "Fichier suspect") -> Threat {
+        Threat(id: u.path, name: name, type: type, location: shortPath(u), severity: sev, kind: .file, paths: [u],
+               needsAdmin: !FS.fm.isWritableFile(atPath: u.deletingLastPathComponent().path), detail: detail)
+    }
+
+    private static func inspect(_ u: URL, _ v: URLResourceValues, zone: Zone, full: Bool, sig: Signatures) -> Threat? {
+        let name = u.lastPathComponent
+        let lname = name.lowercased()
+        let ext = u.pathExtension.lowercased()
+        let size = v.fileSize ?? 0
+        if Whitelist.contains(u.path) { return nil }
+
+        // Faux installateurs téléchargés
+        if zone == .loose, installerExts.contains(ext) {
+            if isAdware(lname) {
+                return fileThreat(u, name, .high, "Installateur d'un logiciel publicitaire ou d'un faux optimiseur connu.", type: "Installateur dangereux")
+            }
+            if lname.contains("flash") && (lname.contains("player") || lname.contains("install")) {
+                return fileThreat(u, name, .high, "Flash Player n'existe plus depuis 2020 : ce fichier est un faux installateur.", type: "Faux installateur")
+            }
+            return nil
+        }
+
+        let isScriptExt = scriptExts.contains(ext)
+        guard size > 0, size <= 60_000_000, v.isExecutable == true || isScriptExt else { return nil }
+        guard let h = try? FileHandle(forReadingFrom: u) else { return nil }
+        let head = (try? h.read(upToCount: 4)) ?? Data()
+        var isMach = false
+        if head.count == 4 {
+            let magic = head.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            isMach = machMagics.contains(magic)
+        }
+        let isScript = isScriptExt || head.starts(with: [0x23, 0x21])
+        guard isMach || isScript else { try? h.close(); return nil }
+        let body = (try? h.read(upToCount: isMach ? 1_000_000 : 256_000)) ?? Data()
+        try? h.close()
+
+        // Empreinte connue
+        if !sig.hashes.isEmpty, size <= 30_000_000, let hash = Signatures.sha256(u), let known = sig.hashes[hash] {
+            return fileThreat(u, name, .high, "Malware connu : \(known).", type: "Malware")
+        }
+
+        // Programme caché (hors applications)
+        if isMach, zone != .bundle, name.hasPrefix("."), name.count > 1 {
+            return fileThreat(u, name, .high, "Programme caché : son nom commence par un point pour ne pas être vu.", type: "Programme caché")
+        }
+        guard zone == .loose else { return nil }
+
+        if isScript {
+            let text = String(decoding: head + body, as: UTF8.self).lowercased()
+            if let r = sig.rules.first(where: { $0.matches(text) }) {
+                return fileThreat(u, name, r.severity, r.detail, type: r.name)
+            }
+            return nil
+        }
+
+        // Programme (Mach-O) isolé, hors application : signature et contenu
+        if u.path.contains(".app/Contents/") || u.path.contains(".framework/") { return nil }
+        guard !isSigned(u.path) else { return nil }
+        let text = String(decoding: body, as: UTF8.self).lowercased()
+        if let fam = adwareFamilies.first(where: { text.contains($0) }) {
+            return fileThreat(u, name, .high, "Programme non signé de la famille d'adwares « \(fam) ».", type: "Adware")
+        }
+        let p = u.path
+        if p.hasPrefix("/private/tmp/") || p.hasPrefix("/private/var/tmp/") || p.hasPrefix("/Users/Shared/") {
+            return fileThreat(u, name, .medium, "Programme non signé déposé dans un dossier temporaire ou partagé.", type: "Programme non signé")
+        }
+        if full {
+            return fileThreat(u, name, .check, "Programme sans signature d'un éditeur. Supprimez-le si vous ne savez pas d'où il vient.", type: "Programme non signé")
+        }
+        return nil
     }
 
     // MARK: Agents et démons de lancement
@@ -99,30 +259,35 @@ enum ThreatEngine {
         return (label, program)
     }
 
-    private static func launchItems(full: Bool) -> [Threat] {
+    private static func launchItems(full: Bool, sig: Signatures, progress: ScanProgress) -> [Threat] {
         var out: [Threat] = []
         for (dir, admin) in launchDirs {
             for plist in FS.children(dir) where plist.pathExtension == "plist" {
+                progress.tick(plist.path)
                 let (label, program) = launchProgram(plist)
-                if label.hasPrefix("com.apple.") { continue }
+                if label.hasPrefix("com.apple.") || Whitelist.contains(label, program, plist.lastPathComponent) { continue }
                 let both = label + " " + program + " " + plist.lastPathComponent
+                let command = ((NSDictionary(contentsOf: plist)?["ProgramArguments"] as? [String]) ?? []).joined(separator: " ").lowercased()
                 var sev: Threat.Severity?
                 var why = ""
                 if isAdware(both) {
                     sev = .high; why = "Logiciel publicitaire ou faux optimiseur connu"
+                } else if let r = sig.rules.first(where: { $0.matches(command) }) {
+                    sev = .high; why = r.name
                 } else if program.hasPrefix("/tmp/") || program.hasPrefix("/private/tmp/") || program.hasPrefix("/Users/Shared/") {
                     sev = .high; why = "Programme lancé depuis un dossier temporaire"
                 } else if program.split(separator: "/").contains(where: { $0.hasPrefix(".") && $0.count > 1 }) {
                     sev = .high; why = "Programme caché"
-                } else if full, !program.isEmpty, FS.fm.fileExists(atPath: program), !isSigned(program) {
-                    sev = .medium; why = "Programme non signé lancé automatiquement"
+                } else if !program.isEmpty, FS.fm.fileExists(atPath: program), !program.hasPrefix("/System"), !program.hasPrefix("/usr/bin"),
+                          !program.hasPrefix("/bin"), !isSigned(program) {
+                    sev = full ? .medium : .check; why = "Programme non signé lancé automatiquement"
                 }
                 if let sev {
                     var paths = [plist]
-                    if !program.isEmpty, FS.fm.fileExists(atPath: program), !program.hasPrefix("/System"), !program.hasPrefix("/usr") {
+                    if !program.isEmpty, FS.fm.fileExists(atPath: program), !program.hasPrefix("/System"), !program.hasPrefix("/usr"), !program.hasPrefix("/bin") {
                         paths.append(URL(fileURLWithPath: program))
                     }
-                    out.append(Threat(id: plist.path, name: label, type: admin ? "Démon système" : "Agent de lancement",
+                    out.append(Threat(id: plist.path, name: label, type: plist.path.contains("LaunchDaemons") ? "Démon système" : "Agent de lancement",
                                       location: plist.path.replacingOccurrences(of: FS.home.path, with: "~"),
                                       severity: sev, kind: .launchItem, paths: paths, needsAdmin: admin, detail: why))
                 }
@@ -132,27 +297,34 @@ enum ThreatEngine {
     }
 
     static func isSigned(_ path: String) -> Bool {
-        let r = Shell.run("/usr/bin/codesign", ["-v", path], timeout: 15)
+        let r = Shell.run("/usr/bin/codesign", ["-v", path], timeout: 20)
         return !r.err.contains("not signed at all")
     }
 
     // MARK: Applications
 
-    private static func apps() -> [Threat] {
+    private static func apps(full: Bool, progress: ScanProgress, cancelled: () -> Bool) -> [Threat] {
         var out: [Threat] = []
         for dir in [URL(fileURLWithPath: "/Applications"), FS.home.appendingPathComponent("Applications")] {
             for app in FS.children(dir) where app.pathExtension == "app" {
+                if cancelled() { return out }
+                progress.tick(app.path)
                 let name = app.deletingPathExtension().lastPathComponent
                 let bid = Bundle(url: app)?.bundleIdentifier ?? ""
+                if Whitelist.contains(name, bid) || bid.hasPrefix("com.apple.") { continue }
                 if isAdware(name + " " + bid) {
                     out.append(Threat(id: app.path, name: name, type: "Faux optimiseur / adware", location: app.path,
                                       severity: .high, kind: .app, paths: [app], needsAdmin: false,
                                       detail: "Logiciel connu pour afficher de fausses alertes ou de la publicité"))
+                } else if full, !isSigned(app.path) {
+                    out.append(Threat(id: app.path, name: name, type: "Application non signée", location: app.path,
+                                      severity: .check, kind: .app, paths: [app], needsAdmin: false,
+                                      detail: "Aucun éditeur n'a signé cette application. Supprimez-la si vous ne savez pas d'où elle vient."))
                 }
             }
         }
         // Dossiers d'adwares typiques dans Application Support
-        for d in FS.children(FS.lib("Application Support")) where isAdware(d.lastPathComponent) {
+        for d in FS.children(FS.lib("Application Support")) where isAdware(d.lastPathComponent) && !Whitelist.contains(d.lastPathComponent) {
             out.append(Threat(id: d.path, name: d.lastPathComponent, type: "Fichiers d'adware",
                               location: d.path.replacingOccurrences(of: FS.home.path, with: "~"),
                               severity: .high, kind: .app, paths: [d], needsAdmin: false))
@@ -175,7 +347,7 @@ enum ThreatEngine {
     }
 
     private static func profiles() -> [Threat] {
-        profileIdentifiers().map { id in
+        profileIdentifiers().filter { !Whitelist.contains($0) }.map { id in
             let sus = isAdware(id) || id.lowercased().contains("search") || id.lowercased().contains("safari") || id.lowercased().contains("chrome")
             return Threat(id: "profile:" + id, name: id, type: "Profil de configuration", location: "Réglages Système › Profils",
                           severity: sus ? .high : .medium, kind: .profile, paths: [], needsAdmin: true,
@@ -204,6 +376,7 @@ enum ThreatEngine {
                       let data = try? Data(contentsOf: ver.appendingPathComponent("manifest.json")),
                       let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
                 let name = AppsEngine.resolveExtName(m["name"] as? String ?? ext.lastPathComponent, dir: ver)
+                if Whitelist.contains(name) { continue }
                 let overrides = m["chrome_settings_overrides"] != nil || (m["chrome_url_overrides"] as? [String: Any])?["newtab"] != nil
                 if isAdware(name) || overrides {
                     out.append(Threat(id: ext.path, name: name, type: "Extension \(browser)",
@@ -216,7 +389,7 @@ enum ThreatEngine {
         return out
     }
 
-    // MARK: Tâches planifiées, hosts, processus
+    // MARK: Tâches planifiées, hosts, proxy, processus
 
     private static func cron() -> [Threat] {
         let r = Shell.run("/usr/bin/crontab", ["-l"], timeout: 10)
@@ -242,6 +415,26 @@ enum ThreatEngine {
                        detail: suspicious.prefix(2).joined(separator: " · "))]
     }
 
+    /// Un proxy actif fait passer toute la navigation par un autre ordinateur.
+    private static func proxy() -> [Threat] {
+        let r = Shell.run("/usr/sbin/scutil", ["--proxy"], timeout: 10)
+        var on: [String] = []
+        var server = ""
+        for line in r.out.components(separatedBy: .newlines) {
+            let parts = line.components(separatedBy: " : ")
+            guard parts.count == 2 else { continue }
+            let k = parts[0].trimmingCharacters(in: .whitespaces), val = parts[1].trimmingCharacters(in: .whitespaces)
+            if ["HTTPEnable", "HTTPSEnable", "SOCKSEnable", "ProxyAutoConfigEnable"].contains(k), val == "1" { on.append(k) }
+            if ["HTTPProxy", "HTTPSProxy", "SOCKSProxy", "ProxyAutoConfigURLString"].contains(k), server.isEmpty { server = val }
+        }
+        guard !on.isEmpty else { return [] }
+        let local = server.hasPrefix("127.") || server.contains("localhost")
+        return [Threat(id: "proxy", name: "Proxy internet actif", type: "Navigation détournée",
+                       location: server.isEmpty ? "Réglages réseau" : server, severity: local ? .high : .check, kind: .proxy,
+                       paths: [], needsAdmin: true,
+                       detail: "Toute la navigation passe par un intermédiaire. Normal en entreprise, anormal chez un particulier.")]
+    }
+
     private static func processes() -> [Threat] {
         let r = Shell.run("/bin/ps", ["-axo", "pid=,comm="], timeout: 15)
         var out: [Threat] = []
@@ -249,6 +442,7 @@ enum ThreatEngine {
             let t = line.trimmingCharacters(in: .whitespaces)
             guard let sp = t.firstIndex(of: " ") else { continue }
             let path = String(t[sp...]).trimmingCharacters(in: .whitespaces)
+            if Whitelist.contains(path) { continue }
             if isAdware(path) || path.hasPrefix("/tmp/") || path.hasPrefix("/private/tmp/") {
                 out.append(Threat(id: "proc:" + path, name: URL(fileURLWithPath: path).lastPathComponent, type: "Processus suspect",
                                   location: path, severity: .high, kind: .process, paths: [URL(fileURLWithPath: path)], needsAdmin: false))
@@ -261,11 +455,19 @@ enum ThreatEngine {
         var out: [Threat] = []
         let apps = FS.children(URL(fileURLWithPath: "/Applications")) + FS.children(FS.home.appendingPathComponent("Applications"))
         for app in apps where app.pathExtension == "app" {
-            let n = app.deletingPathExtension().lastPathComponent.lowercased()
-            if let tool = remoteTools.first(where: { n.contains($0.1) }) {
-                out.append(Threat(id: app.path, name: tool.0, type: "Prise en main à distance", location: app.path,
+            let bid = Bundle(url: app)?.bundleIdentifier ?? ""
+            if let tool = remoteTool(in: app.deletingPathExtension().lastPathComponent + " " + bid) {
+                out.append(Threat(id: app.path, name: tool, type: "Prise en main à distance", location: app.path,
                                   severity: .check, kind: .app, paths: [app], needsAdmin: false,
                                   detail: "Permet de contrôler ce Mac à distance. Supprimez-le si vous ne l'avez pas installé vous-même."))
+            }
+        }
+        // Agent MeshCentral relié à un autre serveur que celui de SecureeTech
+        if !Whitelist.meshIsSecureeTech {
+            for dir in Whitelist.meshDirs where FS.exists(URL(fileURLWithPath: dir)) && !dir.lowercased().contains("secureetech") {
+                out.append(Threat(id: dir, name: "MeshCentral (serveur inconnu)", type: "Prise en main à distance", location: dir,
+                                  severity: .medium, kind: .app, paths: [URL(fileURLWithPath: dir)], needsAdmin: true,
+                                  detail: "Agent de prise en main relié à un serveur qui n'est pas celui de SecureeTech."))
             }
         }
         return out
@@ -316,6 +518,15 @@ enum ThreatEngine {
                 adminCmds.append("cp /etc/hosts /etc/hosts.optimac-sauvegarde")
                 adminCmds.append("grep -vE 'apple\\.com|google\\.|bing\\.com|microsoft\\.com|icloud\\.com|secureetech|bank|paypal|update' /etc/hosts.optimac-sauvegarde > /etc/hosts")
                 adminCmds.append("dscacheutil -flushcache; killall -HUP mDNSResponder")
+                done += 1
+            case .proxy:
+                let services = Shell.run("/usr/sbin/networksetup", ["-listallnetworkservices"], timeout: 10).out
+                    .components(separatedBy: .newlines).dropFirst().filter { !$0.isEmpty && !$0.hasPrefix("*") }
+                for svc in services {
+                    for flag in ["-setwebproxystate", "-setsecurewebproxystate", "-setsocksfirewallproxystate", "-setautoproxystate"] {
+                        adminCmds.append("/usr/sbin/networksetup \(flag) \(Shell.quote(svc)) off")
+                    }
+                }
                 done += 1
             case .process:
                 for p in t.paths { Shell.run("/usr/bin/pkill", ["-9", "-f", p.path]) }

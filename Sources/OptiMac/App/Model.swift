@@ -78,6 +78,9 @@ final class Model: ObservableObject {
     @Published var phase: HomePhase = .idle
     @Published var progress: Double = 0
     @Published var progressLabel = ""
+    /// Compteurs en direct pendant une analyse (accueil et anti-malware).
+    @Published var scanFiles = 0
+    @Published var scanCurrent = ""
     @Published var findings: [Finding] = []
     @Published var score: Int?
     @Published var lastScan: Date?
@@ -116,6 +119,9 @@ final class Model: ObservableObject {
     @Published var devices: [NetDevice] = []
     @Published var netLoading = false
     @Published var netProgress: Double = 0
+    /// macOS n'a laissé voir aucun appareil (autorisation « Réseau local » refusée).
+    @Published var netBlocked = false
+    @Published var startupDenied = false
     @Published var wifi: WifiInfo?
     @Published var speedDown: Double?
     @Published var speedUp: Double?
@@ -125,6 +131,29 @@ final class Model: ObservableObject {
     @Published var activity: [(Date, String)] = []
 
     private let stop = StopFlag()
+    private var progressTimer: Timer?
+
+    /// Recopie dix fois par seconde l'avancement du moteur vers l'interface.
+    private func watch(_ pr: ScanProgress, update: @escaping (Double, String) -> Void) {
+        progressTimer?.invalidate()
+        scanFiles = 0
+        scanCurrent = ""
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            let s = pr.snapshot()
+            Task { @MainActor in
+                guard let self else { return }
+                if s.files != self.scanFiles { Sound.tick.play() }
+                self.scanFiles = s.files
+                self.scanCurrent = s.current
+                update(s.fraction, s.label)
+            }
+        }
+    }
+
+    private func unwatch() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
 
     init(license: LicenseManager, settings: AppSettings) {
         self.license = license
@@ -165,31 +194,37 @@ final class Model: ObservableObject {
         guard phase != .scanning, phase != .boosting else { return }
         phase = .scanning
         progress = 0
+        Sound.start.play()
         Task { await runScan() }
     }
 
     private func runScan() async {
+        let pr = ScanProgress()
+        watch(pr) { [weak self] fraction, _ in self?.progress = fraction }
+
         progressLabel = "Recherche des fichiers inutiles…"
-        cleanup = await runInBackground { CleanupEngine.scan() }
-        progress = 0.3
+        pr.setRange(base: 0, span: 0.35)
+        cleanup = await runInBackground { CleanupEngine.scan(progress: pr) }
 
         progressLabel = "Recherche des menaces…"
-        let found = await runInBackground { ThreatEngine.scan(full: false, step: { _, _ in }, cancelled: { false }) }
+        pr.setRange(base: 0.35, span: 0.35)
+        let found = await runInBackground { ThreatEngine.scan(full: false, progress: pr, cancelled: { false }) }
         threats = found
         selectedThreats = Set(found.filter { $0.severity >= .medium }.map(\.id))
         lastThreatScan = Date()
-        progress = 0.55
 
         progressLabel = "Vérification des navigateurs…"
+        pr.setRange(base: 0.7, span: 0.1)
         browsers = await runInBackground { BrowserEngine.scan() }
-        progress = 0.7
 
         progressLabel = "Analyse du démarrage…"
+        pr.setRange(base: 0.8, span: 0.1)
         startup = await runInBackground { StartupEngine.list() }
-        progress = 0.85
 
         progressLabel = "Santé du disque…"
+        pr.setRange(base: 0.9, span: 0.1)
         disk = await runInBackground { HealthEngine.disk() }
+        unwatch()
         progress = 1
 
         buildFindings()
@@ -200,7 +235,8 @@ final class Model: ObservableObject {
         lastScan = Date()
         settings.setDate("lastScan", lastScan)
         phase = .results
-        log("Analyse complète : score \(s)/100")
+        (dangerCount + hijackedCount > 0 ? Sound.alert : Sound.found).play()
+        log("Analyse complète : score \(s)/100 (\(Fmt.number(scanFiles)) fichiers examinés)")
         if settings.notifScanDone && !NSApp.isActive {
             Notifier.post("Analyse terminée", "Vous pouvez récupérer \(Fmt.bytes(junkSize)) et corriger \(dangerCount + hijackedCount) problème(s).")
         }
@@ -246,6 +282,7 @@ final class Model: ObservableObject {
         let wantsPremium = findings.contains { $0.selected && $0.premium }
         phase = .boosting
         boostSteps = []
+        Sound.boost.play()
         Task {
             boostSteps.append("Création d'un instantané Time Machine…")
             _ = await runInBackground { MaintenanceEngine.snapshot() }
@@ -273,13 +310,13 @@ final class Model: ObservableObject {
             }
             if chosen.contains("startup") {
                 boostSteps.append("Allègement du démarrage…")
-                for item in startup where item.useless && item.enabled && item.kind == .agent {
-                    await runInBackground { StartupEngine.toggle(item) }
-                }
+                let list = startup.filter { $0.useless && $0.enabled && $0.kind == .agent }
+                await runInBackground { StartupEngine.setEnabled(list, false) }
                 startup = await runInBackground { StartupEngine.list() }
             }
             boostSteps.append("Terminé")
             phase = .done
+            Sound.success.play()
             log("Optimisation : \(Fmt.bytes(got)) libérés")
             if settings.notifCleanDone && !NSApp.isActive {
                 Notifier.post("Optimisation terminée", "\(Fmt.bytes(got)) libérés sur votre Mac.")
@@ -317,6 +354,7 @@ final class Model: ObservableObject {
             working = nil
             log("Nettoyage : \(Fmt.bytes(got)) libérés")
             notify("\(Fmt.bytes(got)) libérés")
+            Sound.success.play()
             let remaining = cats.filter(\.selected).reduce(0) { $0 + $1.size } - got
             loadCleanup()
             if limit != nil && remaining > 1_000_000 { _ = needsPremium(.unlimitedCleanup) }
@@ -364,17 +402,23 @@ final class Model: ObservableObject {
         threatLoading = true
         stop.value = false
         threatProgress = 0
+        Sound.start.play()
+        let pr = ScanProgress()
+        watch(pr) { [weak self] fraction, label in
+            self?.threatProgress = fraction
+            self?.threatStep = label
+        }
         Task {
             let found = await runInBackground {
-                ThreatEngine.scan(full: full, step: { label, p in
-                    DispatchQueue.main.async { self.threatStep = label; self.threatProgress = p }
-                }, cancelled: { [stop = self.stop] in stop.value })
+                ThreatEngine.scan(full: full, progress: pr, cancelled: { [stop = self.stop] in stop.value })
             }
+            unwatch()
             threats = found
             selectedThreats = Set(found.filter { $0.severity >= .medium }.map(\.id))
             lastThreatScan = Date()
             threatLoading = false
-            log("Analyse anti-malware : \(found.count) élément(s)")
+            (dangerCount > 0 ? Sound.alert : Sound.success).play()
+            log("Analyse anti-malware : \(Fmt.number(scanFiles)) fichiers examinés, \(found.count) élément(s) signalé(s)")
             if dangerCount > 0 && settings.notifThreats {
                 Notifier.post("Menaces détectées", "OptiMac a trouvé \(dangerCount) menace(s) sur votre Mac.")
             }
@@ -396,6 +440,7 @@ final class Model: ObservableObject {
             self.quarantine = ThreatEngine.loadQuarantine()
             log("\(n) menace(s) \(quarantine ? "mise(s) en quarantaine" : "supprimée(s)")")
             notify("\(n) menace(s) traitée(s)")
+            Sound.success.play()
         }
     }
 
@@ -494,6 +539,7 @@ final class Model: ObservableObject {
             apps = list
             menuBarApps = AppsEngine.menuBarApps()
             startup = await runInBackground { StartupEngine.list() }
+            startupDenied = StartupEngine.loginItemsDenied
             extensions = await runInBackground { AppsEngine.extensions() }
             appsLoading = false
         }
@@ -507,15 +553,27 @@ final class Model: ObservableObject {
         }
     }
 
-    func uninstall(_ app: AppItem, force: Bool) {
+    /// Désinstalle une ou plusieurs applications (un seul mot de passe pour toute la sélection).
+    func uninstall(_ list: [AppItem], force: Bool) {
+        guard !list.isEmpty else { return }
         if force && needsPremium(.forceUninstall) { return }
-        working = "Désinstallation de \(app.name)…"
+        working = list.count == 1 ? "Désinstallation de \(list[0].name)…" : "Désinstallation de \(list.count) applications…"
         Task {
-            let left = await runInBackground { AppsEngine.leftovers(for: app) }
-            let ok = await runInBackground { AppsEngine.uninstall(app, leftovers: left, force: force) }
+            let removed = await runInBackground {
+                AppsEngine.uninstall(list, force: force) { app in
+                    DispatchQueue.main.async { self.working = "Désinstallation de \(app.name)…" }
+                }
+            }
             working = nil
-            log("\(app.name) \(ok ? "désinstallé" : "n'a pas pu être désinstallé")")
-            notify(ok ? "\(app.name) a été supprimé" : "\(app.name) résiste : utilisez la suppression forcée")
+            let failed = list.filter { a in !removed.contains(a) }
+            let freedSize = removed.reduce(Int64(0)) { $0 + $1.size }
+            log("Désinstallation : \(removed.map(\.name).joined(separator: ", "))" + (failed.isEmpty ? "" : " — échec : \(failed.map(\.name).joined(separator: ", "))"))
+            if failed.isEmpty {
+                Sound.success.play()
+                notify(removed.count == 1 ? "\(removed[0].name) a été supprimé" : "\(removed.count) applications supprimées (\(Fmt.bytes(freedSize)))")
+            } else {
+                notify("\(failed.map(\.name).joined(separator: ", ")) résiste : utilisez la suppression forcée")
+            }
             loadApps()
         }
     }
@@ -526,13 +584,25 @@ final class Model: ObservableObject {
             return
         }
         let item = AppItem(url: url, name: m.name, bundleID: m.bundleID, version: "", size: 0, isAppStore: false, feedURL: nil, lastUsed: nil)
-        uninstall(item, force: true)
+        uninstall([item], force: true)
     }
 
-    func toggleStartup(_ item: StartupItem) {
+    /// Active ou désactive des éléments de démarrage. L'interrupteur bouge tout de suite, puis l'état réel est relu.
+    func setStartup(_ items: [StartupItem], enabled: Bool) {
+        let ids = Set(items.map(\.id))
+        for i in startup.indices where ids.contains(startup[i].id) { startup[i].enabled = enabled }
+        Sound.click.play()
         Task {
-            await runInBackground { StartupEngine.toggle(item) }
+            await runInBackground { StartupEngine.setEnabled(items, enabled) }
             startup = await runInBackground { StartupEngine.list() }
+            startupDenied = StartupEngine.loginItemsDenied
+            let stuck = startup.filter { ids.contains($0.id) && $0.enabled != enabled }
+            if stuck.isEmpty {
+                notify(items.count == 1 ? "\(items[0].name) : \(enabled ? "réactivé" : "désactivé au démarrage")" : "\(items.count) éléments \(enabled ? "réactivés" : "désactivés")")
+                log("Démarrage : \(items.map(\.name).joined(separator: ", ")) \(enabled ? "réactivé(s)" : "désactivé(s)")")
+            } else {
+                notify("macOS a refusé pour : \(stuck.map(\.name).joined(separator: ", "))")
+            }
         }
     }
 
@@ -569,13 +639,17 @@ final class Model: ObservableObject {
 
     func scanNetwork() {
         netLoading = true
+        netBlocked = false
         netProgress = 0
+        Sound.start.play()
         Task {
             wifi = await runInBackground { NetworkEngine.wifi() }
             devices = await runInBackground { NetworkEngine.scanDevices(progress: { p in
                 DispatchQueue.main.async { self.netProgress = p }
             }) }
             netLoading = false
+            netBlocked = devices.filter { !$0.isSelf }.isEmpty
+            if devices.contains(where: \.isNew) { Sound.found.play() } else if !netBlocked { Sound.success.play() }
         }
     }
 

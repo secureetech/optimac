@@ -62,6 +62,8 @@ final class AppSettings: ObservableObject {
     @Published var notifStartup: Bool { didSet { d.set(notifStartup, forKey: "notifStartup") } }
     @Published var autoClean: AutoClean { didSet { d.set(autoClean.rawValue, forKey: "autoClean") } }
     @Published var autoCleanHour: Int { didSet { d.set(autoCleanHour, forKey: "autoCleanHour") } }
+    @Published var sounds: Bool { didSet { Sound.enabled = sounds } }
+    @Published var remoteAlert: Bool { didSet { d.set(remoteAlert, forKey: "remoteAlert") } }
     @Published var consentAccepted: Bool { didSet { d.set(consentAccepted, forKey: "consentAccepted") } }
     @Published var welcomeShown: Bool { didSet { d.set(welcomeShown, forKey: "welcomeShown") } }
 
@@ -78,6 +80,8 @@ final class AppSettings: ObservableObject {
         notifStartup = d.object(forKey: "notifStartup") as? Bool ?? true
         autoClean = AutoClean(rawValue: d.string(forKey: "autoClean") ?? "") ?? .off
         autoCleanHour = d.object(forKey: "autoCleanHour") as? Int ?? 10
+        sounds = Sound.enabled
+        remoteAlert = d.object(forKey: "remoteAlert") as? Bool ?? true
         consentAccepted = d.bool(forKey: "consentAccepted")
         welcomeShown = d.bool(forKey: "welcomeShown")
     }

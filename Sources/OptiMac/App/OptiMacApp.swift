@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     let license = LicenseManager()
     let monitor = Monitor()
     let updater = Updater()
+    let remoteWatch = RemoteWatch()
     lazy var model = Model(license: license, settings: settings)
 
     var window: NSWindow?
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Mode « visite » : captures d'écran automatiques (utilisé par la compilation GitHub)
         if let i = CommandLine.arguments.firstIndex(of: "--tour"), i + 1 < CommandLine.arguments.count {
+            Sound.muted = true
             runTour(into: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
             return
         }
@@ -39,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         buildStatusItem()
         UNUserNotificationCenter.current().delegate = self
         Notifier.requestPermission()
+        remoteWatch.start(settings: settings)
 
         // Lancement à l'ouverture de session (agent LaunchAgents, compatible macOS 11)
         if settings.launchAtLogin { StartupEngine.setLaunchAtLogin(true) }

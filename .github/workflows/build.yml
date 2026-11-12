@@ -17,7 +17,7 @@ jobs:
       - name: Fabriquer OptiMac.app et le .dmg
         id: build
         env:
-          VERSION: "1.0.0"
+          VERSION: "1.1.0"
           BUILD: ${{ github.run_number }}
         run: ./scripts/build-app.sh
 
@@ -28,7 +28,7 @@ jobs:
           mkdir -p /tmp/shots
           ./dist/OptiMac.app/Contents/MacOS/OptiMac --tour /tmp/shots &
           PID=$!
-          for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          for i in $(seq 1 260); do kill -0 $PID 2>/dev/null || break; sleep 1; done
           kill $PID 2>/dev/null || true
           ls -la /tmp/shots
           git config user.name "OptiMac CI"
@@ -62,12 +62,14 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: "1.1.0"
         run: |
-          # On remplace le fichier sans supprimer la publication : le lien reste valable en permanence.
+          # On remplace les fichiers sans supprimer la publication : les liens restent valables en permanence.
+          TITLE="OptiMac $VERSION (build ${{ github.run_number }})"
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest dist/OptiMac-1.0.0.dmg --clobber
-            gh release edit latest --title "OptiMac 1.0.0 (build ${{ github.run_number }})"
+            gh release upload latest dist/OptiMac.dmg dist/OptiMac-1.0.0.dmg --clobber
+            gh release edit latest --title "$TITLE"
           else
-            gh release create latest dist/OptiMac-1.0.0.dmg --title "OptiMac 1.0.0 (build ${{ github.run_number }})" \
+            gh release create latest dist/OptiMac.dmg dist/OptiMac-1.0.0.dmg --title "$TITLE" \
               --notes "OptiMac pour macOS 11 Big Sur et plus récent (Intel et Apple Silicon)."
           fi

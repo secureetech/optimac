@@ -39,8 +39,16 @@ enum CleanupEngine {
         return dirs.filter { FS.exists($0) }
     }
 
-    static func scan() -> [CleanCategory] {
+    static func scan(progress: ScanProgress? = nil) -> [CleanCategory] {
         var out: [CleanCategory] = []
+        var done = 0.0
+        // Taille d'une catégorie : fait avancer la jauge et ne dépasse jamais 25 secondes.
+        func sz(_ urls: [URL]) -> Int64 {
+            let s = FS.size(of: urls, progress: progress, deadline: Date().addingTimeInterval(25))
+            done += 1
+            progress?.set(local: done / 9)
+            return s
+        }
         let browserDirs = browserCacheDirs
         let browserPaths = Set(browserDirs.map { $0.standardizedFileURL.path })
 
@@ -53,19 +61,19 @@ enum CleanupEngine {
         }
         out.append(CleanCategory(id: "caches", name: "Caches des applications",
                                  detail: "Fichiers temporaires recréés automatiquement par les applications.",
-                                 icon: "shippingbox", items: caches, size: FS.size(of: caches),
+                                 icon: "shippingbox", items: caches, size: sz(caches),
                                  selected: true, safe: true, mode: .contents))
 
         out.append(CleanCategory(id: "browsers", name: "Caches des navigateurs",
                                  detail: "Safari, Chrome, Firefox, Edge, Brave. Vos mots de passe et favoris ne sont pas touchés.",
-                                 icon: "globe", items: browserDirs, size: FS.size(of: browserDirs),
+                                 icon: "globe", items: browserDirs, size: sz(browserDirs),
                                  selected: true, safe: true, mode: .contents))
 
         let logs = [FS.lib("Logs")].filter(FS.exists)
         let logItems = logs.flatMap { FS.children($0) }.filter { !$0.lastPathComponent.contains("OptiMac") }
         out.append(CleanCategory(id: "logs", name: "Journaux et rapports de plantage",
                                  detail: "Historiques techniques des applications, inutiles au quotidien.",
-                                 icon: "doc.text", items: logItems, size: FS.size(of: logItems),
+                                 icon: "doc.text", items: logItems, size: sz(logItems),
                                  selected: true, safe: true, mode: .contents))
 
         // Fichiers temporaires de plus de 3 jours
@@ -74,28 +82,28 @@ enum CleanupEngine {
         let tmpItems = FS.children(tmp).filter { (FS.modDate($0) ?? Date()) < limit }
         out.append(CleanCategory(id: "temp", name: "Fichiers temporaires",
                                  detail: "Fichiers laissés par des applications depuis plus de 3 jours.",
-                                 icon: "clock.arrow.circlepath", items: tmpItems, size: FS.size(of: tmpItems),
+                                 icon: "clock.arrow.circlepath", items: tmpItems, size: sz(tmpItems),
                                  selected: true, safe: true, mode: .items))
 
         let trash = FS.home.appendingPathComponent(".Trash")
         let trashItems = FS.children(trash)
         out.append(CleanCategory(id: "trash", name: "Corbeille",
                                  detail: "Les fichiers déjà jetés dans la corbeille.",
-                                 icon: "trash", items: trashItems, size: FS.size(of: trashItems),
+                                 icon: "trash", items: trashItems, size: sz(trashItems),
                                  selected: true, safe: true, mode: .items))
 
         let mail = FS.lib("Containers/com.apple.mail/Data/Library/Mail Downloads")
         let mailItems = FS.children(mail)
         out.append(CleanCategory(id: "mail", name: "Pièces jointes Mail téléchargées",
                                  detail: "Copies des pièces jointes déjà ouvertes. Elles restent dans vos e-mails.",
-                                 icon: "paperclip", items: mailItems, size: FS.size(of: mailItems),
+                                 icon: "paperclip", items: mailItems, size: sz(mailItems),
                                  selected: true, safe: true, mode: .items))
 
         let iosUpd = [FS.lib("iTunes/iPhone Software Updates"), FS.lib("iTunes/iPad Software Updates")].filter(FS.exists)
         let iosUpdItems = iosUpd.flatMap { FS.children($0) }
         out.append(CleanCategory(id: "ios_updates", name: "Mises à jour iPhone / iPad",
                                  detail: "Fichiers d'installation d'iOS déjà utilisés.",
-                                 icon: "iphone", items: iosUpdItems, size: FS.size(of: iosUpdItems),
+                                 icon: "iphone", items: iosUpdItems, size: sz(iosUpdItems),
                                  selected: true, safe: true, mode: .items))
 
         // Vieux installateurs dans Téléchargements (non cochés par défaut)
@@ -106,14 +114,14 @@ enum CleanupEngine {
         }
         out.append(CleanCategory(id: "downloads", name: "Anciens installateurs",
                                  detail: "Fichiers .dmg et .pkg téléchargés il y a plus d'un mois.",
-                                 icon: "arrow.down.circle", items: installers, size: FS.size(of: installers),
+                                 icon: "arrow.down.circle", items: installers, size: sz(installers),
                                  selected: false, safe: false, mode: .items))
 
         // Sauvegardes iPhone (non cochées par défaut)
         let backups = FS.children(FS.lib("Application Support/MobileSync/Backup")).filter(FS.isDir)
         out.append(CleanCategory(id: "ios_backups", name: "Anciennes sauvegardes iPhone / iPad",
                                  detail: "Copies complètes de vos appareils. À supprimer seulement si vous n'en avez plus besoin.",
-                                 icon: "externaldrive", items: backups, size: FS.size(of: backups),
+                                 icon: "externaldrive", items: backups, size: sz(backups),
                                  selected: false, safe: false, mode: .items))
 
         return out.filter { $0.size > 0 || !$0.items.isEmpty }

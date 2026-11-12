@@ -78,8 +78,9 @@ struct ProtectView: View {
         VStack(spacing: 12) {
             GlassCard(tint: model.dangerCount > 0 ? Palette.danger : Palette.success) {
                 HStack(spacing: 16) {
-                    IconBubble(symbol: model.dangerCount > 0 ? "exclamationmark.shield.fill" : "checkmark.shield.fill",
-                               color: model.dangerCount > 0 ? Palette.danger : Palette.success, size: 50)
+                    Shield3D(color: model.dangerCount > 0 ? Palette.danger : Palette.success,
+                             symbol: model.dangerCount > 0 ? "exclamationmark.shield.fill" : "checkmark.shield.fill",
+                             size: 46, spinning: model.threatLoading)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.lastThreatScan == nil ? "Jamais analysé" : (model.dangerCount > 0 ? "\(model.dangerCount) menace(s) détectée(s)" : "Aucune menace"))
                             .font(.system(size: 20, weight: .heavy, design: .rounded)).foregroundColor(p.text)
@@ -96,7 +97,23 @@ struct ProtectView: View {
                 }
             }
             if model.threatLoading {
-                LoadingCard(text: model.threatStep.isEmpty ? "Analyse…" : model.threatStep, progress: model.threatProgress)
+                GlassCard(radius: 26, padding: 24, tint: Palette.success) {
+                    HStack(spacing: 26) {
+                        RadarView(size: 150)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(model.threatStep.isEmpty ? "Analyse…" : model.threatStep)
+                                .font(.system(size: 17, weight: .heavy, design: .rounded)).foregroundColor(p.text)
+                            GlowBar(value: model.threatProgress, color: Palette.success)
+                            Text("\(Fmt.number(model.scanFiles)) fichiers examinés")
+                                .font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundColor(p.successText)
+                            Text(model.scanCurrent.replacingOccurrences(of: FS.home.path, with: "~"))
+                                .font(.system(size: 10.5, design: .monospaced)).foregroundColor(p.muted)
+                                .lineLimit(1).truncationMode(.middle)
+                            Muted("Les logiciels SecureeTech et l'assistance SecureeTech sont reconnus et jamais signalés.", size: 11.5)
+                        }
+                    }
+                }
+                .appear(0)
             }
             if !model.threats.isEmpty {
                 HStack(spacing: 8) {

@@ -44,6 +44,8 @@ enum AppsEngine {
                 guard let b = Bundle(url: app) else { continue }
                 let bid = b.bundleIdentifier ?? ""
                 if bid.hasPrefix("com.apple.") || bid == Bundle.main.bundleIdentifier { continue }
+                // Liste blanche : les logiciels SecureeTech et l'assistance ne se désinstallent pas depuis OptiMac.
+                if Whitelist.contains(app.lastPathComponent, bid) { continue }
                 let info = b.infoDictionary ?? [:]
                 let ver = info["CFBundleShortVersionString"] as? String ?? info["CFBundleVersion"] as? String ?? ""
                 let mas = FS.exists(app.appendingPathComponent("Contents/_MASReceipt/receipt"))
@@ -56,8 +58,9 @@ enum AppsEngine {
         return out.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    /// Calcule les tailles et classe les applications de la plus grosse à la plus petite.
     static func withSizes(_ apps: [AppItem]) -> [AppItem] {
-        apps.map { var a = $0; a.size = FS.size(of: a.url); return a }
+        apps.map { var a = $0; a.size = FS.size(of: a.url); return a }.sorted { $0.size > $1.size }
     }
 
     // MARK: Restes laissés dans la Bibliothèque
@@ -91,13 +94,12 @@ enum AppsEngine {
         return out
     }
 
-    /// Désinstallation. En mode forcé : fermeture de force (même dans la barre des menus),
+    /// Désinstallation d'une application. En mode forcé : fermeture de force (même dans la barre des menus),
     /// arrêt des agents qui la relancent, retrait des éléments d'ouverture, suppression des
     /// fichiers protégés avec le mot de passe administrateur.
-    @discardableResult
-    static func uninstall(_ app: AppItem, leftovers: [Leftover], force: Bool) -> Bool {
+    /// Les commandes qui demandent le mot de passe sont ajoutées à `admin` (exécutées ensuite en une fois).
+    private static func remove(_ app: AppItem, leftovers: [Leftover], force: Bool, admin: inout [String]) -> Bool {
         let uid = getuid()
-        var admin: [String] = []
 
         // 1. Fermer l'application et tout ce qui vient de son dossier
         for r in NSWorkspace.shared.runningApplications where r.bundleIdentifier == app.bundleID || (r.bundleURL?.path.hasPrefix(app.url.path) ?? false) {
@@ -138,11 +140,23 @@ enum AppsEngine {
                 }
             }
         }
-        if !admin.isEmpty {
-            let r = Shell.admin(admin, prompt: "OptiMac doit supprimer « \(app.name) » et ses fichiers protégés.")
-            ok = ok && r.ok
+        return ok
+    }
+
+    /// Désinstalle une ou plusieurs applications : un seul mot de passe pour toute la sélection.
+    /// Renvoie les applications réellement supprimées.
+    static func uninstall(_ apps: [AppItem], force: Bool, each: (AppItem) -> Void = { _ in }) -> [AppItem] {
+        var admin: [String] = []
+        var clean = Set<String>()
+        for app in apps {
+            each(app)
+            if remove(app, leftovers: leftovers(for: app), force: force, admin: &admin) { clean.insert(app.id) }
         }
-        return ok && !FS.exists(app.url)
+        if !admin.isEmpty {
+            let what = apps.count == 1 ? "« \(apps[0].name) »" : "\(apps.count) applications"
+            Shell.admin(admin, prompt: "OptiMac doit supprimer \(what) et leurs fichiers protégés.")
+        }
+        return apps.filter { clean.contains($0.id) && !FS.exists($0.url) }
     }
 
     // MARK: Applications dans la barre des menus (près de l'horloge)

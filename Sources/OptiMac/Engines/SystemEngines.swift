@@ -12,40 +12,86 @@ struct StartupItem: Identifiable, Hashable {
     let detail: String
     let kind: Kind
     let plist: URL?
+    let label: String
     var enabled: Bool
     let useless: Bool
+    /// Élément désactivé par une ancienne version d'OptiMac (fichier déplacé).
+    var legacy = false
+    /// Programme de mise à jour envahissant (Microsoft AutoUpdate, Google, Adobe…).
+    var updater = false
 }
 
+/// Programmes qui se lancent tout seuls. La désactivation passe par la commande officielle de macOS
+/// (launchctl disable) : elle tient même si le logiciel recrée son fichier, et elle est réversible.
 enum StartupEngine {
-    static var disabledDir: URL {
-        let u = FS.supportDir.appendingPathComponent("Démarrage désactivé")
-        FS.ensureDir(u)
-        return u
-    }
+    static var disabledDir: URL { FS.supportDir.appendingPathComponent("Démarrage désactivé") }
 
     /// Programmes souvent inutiles au démarrage (le programme reste installé).
     static let uselessHints = ["update", "updater", "helper", "agent", "adobe", "google.keystone", "microsoft.update", "spotify",
                                "skype", "zoom", "teams", "dropbox", "steam", "epic", "discord", "hp", "canon", "epson", "logi", "java"]
 
-    static func list() -> [StartupItem] {
-        var out: [StartupItem] = []
-        let r = Shell.run("/usr/bin/osascript", ["-e", "tell application \"System Events\" to get the name of every login item"], timeout: 10)
-        for n in r.out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: ", ") where !n.isEmpty && n != "OptiMac" {
-            out.append(StartupItem(id: "login:" + n, name: n, detail: "S'ouvre à la connexion", kind: .loginItem, plist: nil, enabled: true,
-                                   useless: uselessHints.contains { n.lowercased().contains($0) }))
-        }
-        for (dir, admin) in ThreatEngine.launchDirs {
-            for p in FS.children(dir) where p.pathExtension == "plist" {
-                let (label, program) = ThreatEngine.launchProgram(p)
-                if label.hasPrefix("com.apple.") || label.contains("secureetech") { continue }
-                out.append(StartupItem(id: p.path, name: niceName(label), detail: program.isEmpty ? label : program,
-                                       kind: admin ? .daemon : .agent, plist: p, enabled: true,
-                                       useless: uselessHints.contains { label.lowercased().contains($0) }))
+    static let updaterMarks = ["com.microsoft.update", "com.microsoft.autoupdate", "com.google.keystone", "com.google.googleupdater",
+                               "com.adobe.arm", "com.adobe.agsservice", "onedrivestandaloneupdater", "teamsupdater"]
+
+    /// macOS a refusé l'accès aux éléments d'ouverture (autorisation « Automatisation »).
+    private(set) static var loginItemsDenied = false
+
+    private static var storedLoginItems: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "disabledLoginItems") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "disabledLoginItems") }
+    }
+
+    @discardableResult
+    private static func events(_ script: String) -> Shell.Result {
+        Shell.run("/usr/bin/osascript", ["-e", "tell application \"System Events\" to \(script)"], timeout: 15)
+    }
+
+    /// Labels désactivés dans un domaine launchd (« gui/501 » ou « system »).
+    private static func disabledLabels(_ domain: String) -> Set<String> {
+        var out = Set<String>()
+        for line in Shell.run("/bin/launchctl", ["print-disabled", domain], timeout: 10).out.components(separatedBy: .newlines) {
+            let parts = line.components(separatedBy: "=>")
+            guard parts.count == 2 else { continue }
+            let state = parts[1].trimmingCharacters(in: .whitespaces)
+            if state.hasPrefix("disabled") || state.hasPrefix("true") {
+                out.insert(parts[0].trimmingCharacters(in: CharacterSet(charactersIn: " \t\"")))
             }
         }
-        for p in FS.children(disabledDir) where p.pathExtension == "plist" {
-            let (label, program) = ThreatEngine.launchProgram(p)
-            out.append(StartupItem(id: p.path, name: niceName(label), detail: program, kind: .agent, plist: p, enabled: false, useless: false))
+        return out
+    }
+
+    static func list() -> [StartupItem] {
+        var out: [StartupItem] = []
+        let r = events("get the name of every login item")
+        loginItemsDenied = !r.ok && (r.err.contains("-1743") || r.err.lowercased().contains("not authorized") || r.err.contains("autoris"))
+        for n in r.out.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: ", ") where !n.isEmpty && !Whitelist.contains(n) {
+            out.append(StartupItem(id: "login:" + n, name: n, detail: "S'ouvre à la connexion", kind: .loginItem, plist: nil, label: n, enabled: true,
+                                   useless: uselessHints.contains { n.lowercased().contains($0) }))
+        }
+        for (n, path) in storedLoginItems.sorted(by: { $0.key < $1.key }) where !out.contains(where: { $0.label == n }) {
+            out.append(StartupItem(id: "login:" + n, name: n, detail: path, kind: .loginItem, plist: nil, label: n, enabled: false, useless: false))
+        }
+
+        let userOff = disabledLabels("gui/\(getuid())"), systemOff = disabledLabels("system")
+        for (dir, _) in ThreatEngine.launchDirs {
+            let daemon = dir.path.contains("LaunchDaemons")
+            for p in FS.children(dir) where p.pathExtension == "plist" {
+                let (label, program) = ThreatEngine.launchProgram(p)
+                if label.hasPrefix("com.apple.") || Whitelist.contains(label, program) { continue }
+                let l = (label + " " + program).lowercased()
+                let off = daemon ? systemOff.contains(label) : userOff.contains(label)
+                out.append(StartupItem(id: p.path, name: niceName(label), detail: program.isEmpty ? label : program,
+                                       kind: daemon ? .daemon : .agent, plist: p, label: label, enabled: !off,
+                                       useless: uselessHints.contains { l.contains($0) },
+                                       updater: updaterMarks.contains { l.contains($0) }))
+            }
+        }
+        if FS.exists(disabledDir) {
+            for p in FS.children(disabledDir) where p.pathExtension == "plist" {
+                let (label, program) = ThreatEngine.launchProgram(p)
+                out.append(StartupItem(id: p.path, name: niceName(label), detail: program, kind: .agent, plist: p, label: label,
+                                       enabled: false, useless: false, legacy: true))
+            }
         }
         return out
     }
@@ -56,42 +102,58 @@ enum StartupEngine {
         return parts.dropFirst().map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
 
-    /// Désactive (déplace dans un dossier OptiMac, réversible) ou réactive.
-    static func toggle(_ item: StartupItem) {
+    /// Active ou désactive une liste d'éléments. Un seul mot de passe pour tous les éléments système.
+    static func setEnabled(_ items: [StartupItem], _ on: Bool) {
         let uid = getuid()
-        switch item.kind {
-        case .loginItem:
-            let n = item.name.replacingOccurrences(of: "\"", with: "")
-            Shell.run("/usr/bin/osascript", ["-e", "tell application \"System Events\" to delete login item \"\(n)\""], timeout: 10)
-        case .agent, .daemon:
-            guard let p = item.plist else { return }
-            if item.enabled {
-                let dest = disabledDir.appendingPathComponent(p.lastPathComponent)
-                let origin = dest.appendingPathExtension("origine")
-                try? p.deletingLastPathComponent().path.write(to: origin, atomically: true, encoding: .utf8)
-                if item.kind == .daemon || !FS.fm.isWritableFile(atPath: p.deletingLastPathComponent().path) {
-                    let domain = p.path.contains("LaunchDaemons") ? "system" : "gui/\(uid)"
-                    Shell.admin(["launchctl bootout \(domain) \(Shell.quote(p.path))",
-                                 "mv \(Shell.quote(p.path)) \(Shell.quote(dest.path))", "chown \(uid) \(Shell.quote(dest.path))"])
+        var admin: [String] = []
+        for item in items where item.enabled != on {
+            switch item.kind {
+            case .loginItem:
+                let n = item.label.replacingOccurrences(of: "\"", with: "")
+                if on {
+                    guard let path = storedLoginItems[item.label] else { continue }
+                    events("make login item at end with properties {path:\"\(path.replacingOccurrences(of: "\"", with: ""))\", hidden:false}")
+                    storedLoginItems[item.label] = nil
                 } else {
-                    Shell.run("/bin/launchctl", ["bootout", "gui/\(uid)", p.path])
-                    try? FS.fm.moveItem(at: p, to: dest)
+                    let path = events("get the path of login item \"\(n)\"").out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if events("delete login item \"\(n)\"").ok, !path.isEmpty { storedLoginItems[item.label] = path }
                 }
-            } else {
-                let origin = p.appendingPathExtension("origine")
-                let dir = (try? String(contentsOf: origin, encoding: .utf8)) ?? FS.lib("LaunchAgents").path
-                let dest = URL(fileURLWithPath: dir).appendingPathComponent(p.lastPathComponent)
-                if dir.hasPrefix(FS.home.path) {
-                    try? FS.fm.moveItem(at: p, to: dest)
-                    Shell.run("/bin/launchctl", ["bootstrap", "gui/\(uid)", dest.path])
-                } else {
-                    let domain = dir.contains("LaunchDaemons") ? "system" : "gui/\(uid)"
-                    Shell.admin(["mv \(Shell.quote(p.path)) \(Shell.quote(dest.path))", "chown root:wheel \(Shell.quote(dest.path))",
-                                 "launchctl bootstrap \(domain) \(Shell.quote(dest.path))"])
+            case .agent, .daemon:
+                guard let p = item.plist else { continue }
+                if item.legacy {
+                    restoreLegacy(p, admin: &admin)
+                    continue
                 }
-                try? FS.fm.removeItem(at: origin)
+                let domain = item.kind == .daemon ? "system" : "gui/\(uid)"
+                let target = Shell.quote("\(domain)/\(item.label)")
+                let cmds = on
+                    ? ["/bin/launchctl enable \(target)", "/bin/launchctl bootstrap \(domain) \(Shell.quote(p.path))"]
+                    : ["/bin/launchctl disable \(target)", "/bin/launchctl bootout \(target)"]
+                if item.kind == .daemon { admin += cmds } else { for c in cmds { Shell.sh(c, timeout: 20) } }
             }
         }
+        if !on, items.contains(where: { $0.label.lowercased().contains("com.microsoft.update") || $0.label.lowercased().contains("com.microsoft.autoupdate") }) {
+            Shell.run("/usr/bin/defaults", ["write", "com.microsoft.autoupdate2", "HowToCheck", "-string", "Manual"])
+        }
+        if !admin.isEmpty {
+            Shell.admin(admin, prompt: "OptiMac modifie des programmes système qui se lancent au démarrage.")
+        }
+    }
+
+    /// Remet en place un fichier déplacé par une ancienne version d'OptiMac.
+    private static func restoreLegacy(_ p: URL, admin: inout [String]) {
+        let origin = p.appendingPathExtension("origine")
+        let dir = (try? String(contentsOf: origin, encoding: .utf8)) ?? FS.lib("LaunchAgents").path
+        let dest = URL(fileURLWithPath: dir).appendingPathComponent(p.lastPathComponent)
+        if dir.hasPrefix(FS.home.path) {
+            try? FS.fm.moveItem(at: p, to: dest)
+            Shell.run("/bin/launchctl", ["bootstrap", "gui/\(getuid())", dest.path])
+        } else {
+            let domain = dir.contains("LaunchDaemons") ? "system" : "gui/\(getuid())"
+            admin += ["mv \(Shell.quote(p.path)) \(Shell.quote(dest.path))", "chown root:wheel \(Shell.quote(dest.path))",
+                      "launchctl bootstrap \(domain) \(Shell.quote(dest.path))"]
+        }
+        try? FS.fm.removeItem(at: origin)
     }
 
     // MARK: Lancement d'OptiMac à l'ouverture de session (compatible macOS 11)
@@ -332,8 +394,11 @@ struct NetDevice: Identifiable {
     let ip: String
     let mac: String
     let name: String
+    let symbol: String
     let isGateway: Bool
     let isSelf: Bool
+    /// Jamais vu lors des recherches précédentes.
+    var isNew = false
 }
 
 struct WifiInfo {
@@ -371,40 +436,93 @@ enum NetworkEngine {
         return ""
     }
 
+    /// Envoie un tout petit paquet à une adresse : l'appareil, s'il existe, se fait alors connaître du Mac.
+    private static func poke(_ fd: Int32, _ ip: String) {
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(9).bigEndian
+        guard inet_pton(AF_INET, ip, &addr.sin_addr) == 1 else { return }
+        let byte: [UInt8] = [0]
+        withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                _ = sendto(fd, byte, 1, 0, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+    }
+
+    private static func describe(host: String, mac: String) -> (name: String, symbol: String) {
+        var n = host
+        for suffix in [".local", ".home", ".lan", ".fritz.box", ".localdomain"] where n.lowercased().hasSuffix(suffix) {
+            n = String(n.dropLast(suffix.count))
+        }
+        let l = n.lowercased()
+        if n.isEmpty || n == "?" {
+            // Adresse « privée » (aléatoire) : typique des téléphones et tablettes récents.
+            let second = mac.split(separator: ":").first.map { String($0).lowercased() } ?? ""
+            let isPrivate = second.count >= 1 && ["2", "6", "a", "e"].contains(String(second.suffix(1)))
+            return isPrivate ? ("Téléphone ou tablette (adresse privée)", "iphone") : ("Appareil inconnu", "questionmark.circle")
+        }
+        let symbol: String
+        if ["iphone", "android", "galaxy", "pixel", "huawei", "xiaomi", "redmi", "oppo"].contains(where: { l.contains($0) }) { symbol = "iphone" }
+        else if l.contains("ipad") || l.contains("tablet") { symbol = "ipad" }
+        else if ["tv", "chromecast", "roku", "firestick", "player", "decodeur", "shield"].contains(where: { l.contains($0) }) { symbol = "tv" }
+        else if ["printer", "imprimante", "epson", "canon", "brother", "officejet", "deskjet", "laserjet", "envy", "hp"].contains(where: { l.contains($0) }) { symbol = "printer" }
+        else if ["macbook", "imac", "mac", "pc", "desktop", "laptop", "windows"].contains(where: { l.contains($0) }) { symbol = "desktopcomputer" }
+        else if ["watch"].contains(where: { l.contains($0) }) { symbol = "applewatch" }
+        else if ["homepod", "sonos", "echo", "alexa", "speaker"].contains(where: { l.contains($0) }) { symbol = "hifispeaker" }
+        else { symbol = "dot.radiowaves.left.and.right" }
+        return (n.replacingOccurrences(of: "-", with: " "), symbol)
+    }
+
     static func scanDevices(progress: @escaping (Double) -> Void) -> [NetDevice] {
         guard let me = localAddress() else { return [] }
         let gw = gateway()
         let parts = me.ip.split(separator: ".")
         guard parts.count == 4 else { return [] }
         let prefix = parts.prefix(3).joined(separator: ".")
-        let group = DispatchGroup()
-        let sem = DispatchSemaphore(value: 48)
-        var done = 0
-        let lock = NSLock()
-        for i in 1...254 {
-            group.enter()
-            DispatchQueue.global().async {
-                sem.wait()
-                Shell.run("/sbin/ping", ["-c", "1", "-t", "1", "\(prefix).\(i)"], timeout: 3)
-                sem.signal()
-                lock.lock(); done += 1; let d = done; lock.unlock()
-                if d % 16 == 0 { progress(Double(d) / 254) }
-                group.leave()
+
+        // Trois passages : certains appareils en veille répondent au deuxième ou au troisième.
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        if fd >= 0 {
+            for pass in 0..<3 {
+                for i in 1...254 {
+                    poke(fd, "\(prefix).\(i)")
+                    if i % 32 == 0 {
+                        usleep(40_000)
+                        progress((Double(pass) + Double(i) / 254) / 4)
+                    }
+                }
+                usleep(600_000)
             }
+            close(fd)
         }
-        group.wait()
-        let r = Shell.run("/usr/sbin/arp", ["-an"], timeout: 15)
+        progress(0.8)
+
+        // « arp -a » donne aussi le nom des appareils quand la box le connaît.
+        var r = Shell.run("/usr/sbin/arp", ["-a"], timeout: 25)
+        if r.out.isEmpty { r = Shell.run("/usr/sbin/arp", ["-an"], timeout: 15) }
+        progress(0.95)
+
+        let known = Set(UserDefaults.standard.stringArray(forKey: "knownDevices") ?? [])
+        var seen = known
         var out: [NetDevice] = []
         for line in r.out.components(separatedBy: .newlines) {
-            guard let o = line.firstIndex(of: "("), let c = line.firstIndex(of: ")") else { continue }
+            guard let o = line.firstIndex(of: "("), let c = line.firstIndex(of: ")"), o < c else { continue }
             let ip = String(line[line.index(after: o)..<c])
             guard ip.hasPrefix(prefix + "."), line.contains(" at "), !line.contains("incomplete") else { continue }
             let mac = line.components(separatedBy: " at ").last?.components(separatedBy: " ").first ?? ""
-            if mac == "ff:ff:ff:ff:ff:ff" { continue }
-            let name = ip == gw ? "Box internet" : "Appareil"
-            out.append(NetDevice(ip: ip, mac: mac, name: name, isGateway: ip == gw, isSelf: false))
+            if mac == "ff:ff:ff:ff:ff:ff" || ip.hasSuffix(".255") || ip == me.ip { continue }
+            let host = String(line[..<o]).trimmingCharacters(in: .whitespaces)
+            var d = describe(host: host, mac: mac)
+            if ip == gw { d = (d.symbol == "questionmark.circle" || host == "?" ? "Box internet" : "Box internet (\(d.name))", "antenna.radiowaves.left.and.right") }
+            out.append(NetDevice(ip: ip, mac: mac, name: d.name, symbol: d.symbol, isGateway: ip == gw, isSelf: false,
+                                 isNew: !known.isEmpty && !mac.isEmpty && !known.contains(mac)))
+            if !mac.isEmpty { seen.insert(mac) }
         }
-        out.append(NetDevice(ip: me.ip, mac: "", name: "Ce Mac (\(SystemInfo.hostname))", isGateway: false, isSelf: true))
+        UserDefaults.standard.set(Array(seen), forKey: "knownDevices")
+        out.append(NetDevice(ip: me.ip, mac: "", name: "Ce Mac (\(SystemInfo.hostname))", symbol: "laptopcomputer", isGateway: false, isSelf: true))
+        progress(1)
         return out.sorted { a, b in
             let x = Int(a.ip.split(separator: ".").last ?? "0") ?? 0, y = Int(b.ip.split(separator: ".").last ?? "0") ?? 0
             return x < y

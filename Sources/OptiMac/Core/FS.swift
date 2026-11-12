@@ -19,22 +19,30 @@ enum FS {
     }
 
     /// Taille réellement occupée sur le disque (dossier ou fichier), en octets.
-    static func size(of url: URL) -> Int64 {
+    static func size(of url: URL, progress: ScanProgress? = nil, deadline: Date? = nil) -> Int64 {
         let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey, .isDirectoryKey]
         if let v = try? url.resourceValues(forKeys: keys), v.isDirectory != true {
+            progress?.tick(url.path)
             return Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
         }
         guard let en = fm.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [], errorHandler: { _, _ in true }) else { return 0 }
         var total: Int64 = 0
+        var n = 0
         for case let f as URL in en {
             if let v = try? f.resourceValues(forKeys: keys), v.isRegularFile == true {
                 total += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
+                progress?.tick(f.path)
             }
+            n += 1
+            // Un dossier énorme ne bloque jamais l'analyse : on s'arrête à l'heure limite.
+            if n % 256 == 0, let deadline, Date() > deadline { break }
         }
         return total
     }
 
-    static func size(of urls: [URL]) -> Int64 { urls.reduce(0) { $0 + size(of: $1) } }
+    static func size(of urls: [URL], progress: ScanProgress? = nil, deadline: Date? = nil) -> Int64 {
+        urls.reduce(0) { $0 + size(of: $1, progress: progress, deadline: deadline) }
+    }
 
     /// Supprime définitivement. Renvoie la place libérée.
     @discardableResult

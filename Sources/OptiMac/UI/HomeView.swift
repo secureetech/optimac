@@ -80,6 +80,7 @@ struct HomeView: View {
         GlassCard(radius: 30, padding: 40) {
             VStack(spacing: 24) {
                 ZStack {
+                    Orbit3D(size: 270, speed: 1.6)
                     Ring(value: model.progress, width: 16).frame(width: 190, height: 190)
                     PulseRings()
                     VStack(spacing: 4) {
@@ -87,12 +88,14 @@ struct HomeView: View {
                         Text("Analyse").font(.system(size: 13, weight: .semibold)).foregroundColor(p.muted)
                     }
                 }
+                .frame(height: 280)
                 Text(model.progressLabel).font(.system(size: 15, weight: .semibold, design: .rounded)).foregroundColor(p.text)
+                LiveScanCounter(files: model.scanFiles, current: model.scanCurrent)
                 HStack(spacing: 10) {
-                    StepDot(title: "Fichiers", done: model.progress >= 0.3)
-                    StepDot(title: "Menaces", done: model.progress >= 0.55)
-                    StepDot(title: "Navigateurs", done: model.progress >= 0.7)
-                    StepDot(title: "Démarrage", done: model.progress >= 0.85)
+                    StepDot(title: "Fichiers", done: model.progress >= 0.35)
+                    StepDot(title: "Menaces", done: model.progress >= 0.7)
+                    StepDot(title: "Navigateurs", done: model.progress >= 0.8)
+                    StepDot(title: "Démarrage", done: model.progress >= 0.9)
                     StepDot(title: "Disque", done: model.progress >= 1)
                 }
             }
@@ -110,7 +113,8 @@ struct HomeView: View {
                     ZStack {
                         Ring(value: Double(model.score ?? 0) / 100, color: scoreColor, width: 13).frame(width: 128, height: 128)
                         VStack(spacing: 0) {
-                            Text("\(model.score ?? 0)").font(.system(size: 38, weight: .heavy, design: .rounded)).foregroundColor(p.text)
+                            CountUp(target: Double(model.score ?? 0)) { "\(Int($0))" }
+                                .font(.system(size: 38, weight: .heavy, design: .rounded)).foregroundColor(p.text)
                             Text("/ 100").font(.system(size: 12, weight: .semibold)).foregroundColor(p.muted)
                         }
                     }
@@ -172,6 +176,7 @@ struct HomeView: View {
         GlassCard(radius: 30, padding: 34) {
             VStack(spacing: 20) {
                 ZStack {
+                    Orbit3D(size: 150, speed: 2.4)
                     PulseRings()
                     Spinner(size: 70)
                     Image(systemName: "bolt.fill").font(.system(size: 26)).foregroundColor(Palette.accent)
@@ -201,11 +206,13 @@ struct HomeView: View {
             VStack(spacing: 16) {
                 ZStack {
                     Circle().fill(Palette.success.opacity(0.15)).frame(width: 120, height: 120)
-                    Image(systemName: "checkmark").font(.system(size: 50, weight: .heavy)).foregroundColor(Palette.success)
+                    Shield3D(color: Palette.success, size: 70)
+                    ParticleBurst()
                 }
                 .appear(0)
                 Text("Votre Mac est optimisé").font(.system(size: 28, weight: .heavy, design: .rounded)).foregroundColor(p.text)
-                Text("\(Fmt.bytes(model.freed)) libérés").font(.system(size: 18, weight: .bold, design: .rounded)).foregroundColor(Palette.accent)
+                CountUp(target: Double(model.freed)) { "\(Fmt.bytes(Int64($0))) libérés" }
+                    .font(.system(size: 18, weight: .bold, design: .rounded)).foregroundColor(Palette.accent)
                 Muted("Un instantané Time Machine a été créé avant l'optimisation.").multilineTextAlignment(.center)
                 HStack(spacing: 10) {
                     Button("Nouvelle analyse") { model.startScan() }.buttonStyle(PrimaryButtonStyle())
@@ -248,6 +255,7 @@ struct ScanOrb: View {
                         .scaleEffect(breathe ? 1.05 : 0.97)
                         .animation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true).delay(Double(i) * 0.3), value: breathe)
                 }
+                Orbit3D(size: 262)
                 Circle()
                     .fill(RadialGradient(colors: [Color(hex: 0xFFB36B), Palette.accent, Color(hex: 0xE45A00)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 4, endRadius: 120))
                     .frame(width: 190, height: 190)
@@ -267,6 +275,7 @@ struct ScanOrb: View {
                 .shadow(color: Color.black.opacity(0.18), radius: 4, x: 0, y: 2)
             }
             .frame(width: 290, height: 290)
+            .rotation3DEffect(.degrees(hover ? 10 : 0), axis: (x: 1, y: -1, z: 0), perspective: 0.5)
             .scaleEffect(hover ? 1.04 : 1)
             .animation(.spring(response: 0.35, dampingFraction: 0.65), value: hover)
         }
@@ -331,6 +340,7 @@ struct StatTile: View {
                 Muted(detail, size: 11.5)
             }
         }
+        .tilt3D()
     }
 }
 
@@ -356,6 +366,7 @@ struct QuickTile: View {
             .padding(14)
             .background(GlassBackground(radius: 18, tint: hover ? color : nil))
             .offset(y: hover ? -2 : 0)
+            .rotation3DEffect(.degrees(hover ? 6 : 0), axis: (x: 1, y: -0.6, z: 0), perspective: 0.6)
         }
         .buttonStyle(PlainHover())
         .onHover { hover = $0 }

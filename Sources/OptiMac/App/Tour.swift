@@ -24,7 +24,7 @@ extension AppDelegate {
             model.startScan()
             await wait(3)
             await shot("02-analyse-en-cours")
-            for _ in 0..<60 where model.phase == .scanning { await wait(1) }
+            for _ in 0..<110 where model.phase == .scanning { await wait(1) }
             await shot("03-resultats")
 
             let screens: [(Section, String)] = [(.clean, "04-nettoyage"), (.space, "05-espace-disque"), (.protect, "06-protection"),
@@ -35,6 +35,17 @@ extension AppDelegate {
                 await wait(sec == .space ? 8 : 3)
                 await shot(name)
             }
+
+            model.section = .protect
+            model.scanThreats(full: true)
+            await wait(4)
+            await shot("06b-analyse-malware-en-cours")
+            model.stopScan()
+            model.section = .network
+            model.scanNetwork()
+            await wait(1.5)
+            await shot("08b-recherche-reseau")
+            await wait(6)
 
             model.section = .home
             model.premiumFeature = .unlimitedCleanup

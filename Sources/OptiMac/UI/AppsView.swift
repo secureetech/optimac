@@ -31,6 +31,8 @@ struct AppsView: View {
     @State private var tab: AppsTab = .uninstall
     @State private var search = ""
     @State private var onlyUnused = false
+    @State private var sort: AppSort = .size
+    @State private var picked = Set<String>()
 
     var body: some View {
         ScrollView {
@@ -80,9 +82,27 @@ struct AppsView: View {
 
     private var filtered: [AppItem] {
         let sixMonths = Date().addingTimeInterval(-180 * 86400)
-        return model.apps.filter { a in
+        let list = model.apps.filter { a in
             (search.isEmpty || a.name.localizedCaseInsensitiveContains(search))
                 && (!onlyUnused || (a.lastUsed ?? .distantPast) < sixMonths)
+        }
+        switch sort {
+        case .size: return list.sorted { $0.size > $1.size }
+        case .name: return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .unused: return list.sorted { ($0.lastUsed ?? .distantPast) < ($1.lastUsed ?? .distantPast) }
+        }
+    }
+
+    private var pickedApps: [AppItem] { model.apps.filter { picked.contains($0.id) } }
+
+    private func removePicked(force: Bool) {
+        let list = pickedApps
+        let names = list.prefix(6).map(\.name).joined(separator: ", ") + (list.count > 6 ? "…" : "")
+        let title = force ? "Suppression forcée de \(list.count) application(s) ?" : "Désinstaller \(list.count) application(s) ?"
+        if Confirm.ask(title, "\(names)\n\nLes applications et tous leurs fichiers seront supprimés. Un seul mot de passe sera demandé.",
+                       ok: force ? "Forcer la suppression" : "Désinstaller", danger: true) {
+            model.uninstall(list, force: force)
+            picked = []
         }
     }
 
@@ -96,26 +116,49 @@ struct AppsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(GlassBackground(radius: 12))
+                Picker("", selection: $sort) {
+                    ForEach(AppSort.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 190)
                 Toggle("Inutilisées depuis 6 mois", isOn: $onlyUnused)
                     .toggleStyle(SwitchToggleStyle(tint: Palette.accent))
                     .font(.system(size: 12.5))
             }
-            GlassCard(padding: 14, tint: Palette.accent) {
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle.fill").foregroundColor(Palette.accent)
-                    Muted("« Désinstaller » supprime l'application et tous ses restes. « Forcer » ferme l'application, coupe ce qui la relance et supprime même les fichiers protégés (mot de passe administrateur demandé).")
+            HStack(spacing: 8) {
+                Button(picked.count == filtered.count && !filtered.isEmpty ? "Tout décocher" : "Tout cocher") {
+                    picked = picked.count == filtered.count ? [] : Set(filtered.map(\.id))
+                }
+                .buttonStyle(GlassButtonStyle())
+                Muted(picked.isEmpty ? "Cochez plusieurs applications pour les désinstaller d'un coup. Les plus grosses sont en haut."
+                                     : "\(picked.count) application(s) cochée(s) · \(Fmt.bytes(pickedApps.reduce(0) { $0 + $1.size }))")
+                Spacer()
+                if !picked.isEmpty {
+                    Button(action: { removePicked(force: true) }) {
+                        HStack(spacing: 4) { Image(systemName: "bolt.fill"); Text("Forcer") }
+                    }
+                    .buttonStyle(GlassButtonStyle(danger: true))
+                    Button(action: { removePicked(force: false) }) {
+                        Label("Désinstaller la sélection", systemImage: "trash")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
                 }
             }
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: picked.isEmpty)
             ForEach(Array(filtered.enumerated()), id: \.element.id) { i, a in
-                AppRow(app: a,
+                AppRow(app: a, on: picked.contains(a.id), biggest: filtered.first?.size ?? 0,
+                       toggle: {
+                           if picked.contains(a.id) { picked.remove(a.id) } else { picked.insert(a.id) }
+                           Sound.click.play()
+                       },
                        uninstall: {
                            if Confirm.ask("Désinstaller \(a.name) ?", "L'application et ses fichiers seront supprimés.", ok: "Désinstaller", danger: true) {
-                               model.uninstall(a, force: false)
+                               model.uninstall([a], force: false)
                            }
                        },
                        force: {
                            if Confirm.ask("Suppression forcée de \(a.name) ?", "OptiMac va fermer l'application de force, retirer ce qui la relance et supprimer tous ses fichiers, même protégés.", ok: "Forcer la suppression", danger: true) {
-                               model.uninstall(a, force: true)
+                               model.uninstall([a], force: true)
                            }
                        })
                     .appear(min(i, 14))
@@ -210,30 +253,67 @@ struct AppsView: View {
     // MARK: Démarrage
 
     private var startupTab: some View {
-        VStack(spacing: 8) {
+        let updaters = model.startup.filter { $0.updater && $0.enabled }
+        return VStack(spacing: 8) {
             GlassCard(padding: 14, tint: Palette.blue) {
-                Muted("Désactiver un élément ne supprime pas le logiciel : il ne se lance simplement plus tout seul. Vous pouvez le réactiver à tout moment.")
+                Muted("Désactiver un élément ne supprime pas le logiciel : il ne se lance simplement plus tout seul. Vous pouvez le réactiver à tout moment. Les logiciels SecureeTech ne sont pas listés : ils restent toujours actifs.")
+            }
+            if !updaters.isEmpty {
+                GlassCard(padding: 14, tint: Palette.accent) {
+                    HStack(spacing: 12) {
+                        IconBubble(symbol: "arrow.triangle.2.circlepath", color: Palette.accent, size: 34)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Strong("Mises à jour envahissantes (\(updaters.count))", size: 13.5)
+                            Muted("Microsoft AutoUpdate, Google, Adobe… : ces programmes ouvrent des fenêtres et tournent en permanence. OptiMac peut les couper en un clic (réversible).", size: 11.5)
+                        }
+                        Spacer()
+                        Button("Tout couper") { model.setStartup(updaters, enabled: false) }.buttonStyle(PrimaryButtonStyle())
+                    }
+                }
+            }
+            if model.startupDenied {
+                GlassCard(padding: 14, tint: Palette.warning) {
+                    HStack(spacing: 12) {
+                        IconBubble(symbol: "lock.shield", color: Palette.warning, size: 32)
+                        Muted("macOS n'a pas autorisé OptiMac à lire les applications qui s'ouvrent à la connexion. Autorisez « OptiMac » dans Réglages › Confidentialité et sécurité › Automatisation, puis cliquez sur Actualiser.")
+                        Spacer()
+                        Button("Ouvrir les réglages") {
+                            Links.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+                        }
+                        .buttonStyle(GlassButtonStyle())
+                    }
+                }
             }
             ForEach(model.startup) { s in
                 GlassCard(padding: 12) {
                     HStack(spacing: 12) {
                         IconBubble(symbol: s.kind == .loginItem ? "person.crop.circle" : (s.kind == .daemon ? "gearshape.2" : "bolt.horizontal"),
-                                   color: s.useless ? Palette.warning : Palette.blue, size: 30)
+                                   color: !s.enabled ? p.muted : (s.useless ? Palette.warning : Palette.blue), size: 30)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Strong(s.name, size: 13.5)
-                                if s.useless && s.enabled { Tag(text: "Souvent inutile", color: Palette.warning) }
+                                if !s.enabled { Tag(text: "Désactivé", color: p.muted) }
+                                else if s.useless { Tag(text: "Souvent inutile", color: Palette.warning) }
+                                if s.kind == .daemon { Tag(text: "Mot de passe demandé", color: Palette.blue) }
                             }
                             Muted(s.detail, size: 11).lineLimit(1)
                         }
                         Spacer()
-                        Toggle("", isOn: Binding(get: { s.enabled }, set: { _ in model.toggleStartup(s) }))
+                        Toggle("", isOn: Binding(get: { s.enabled }, set: { on in model.setStartup([s], enabled: on) }))
                             .toggleStyle(SwitchToggleStyle(tint: Palette.accent))
                             .labelsHidden()
                     }
                 }
+                .opacity(s.enabled ? 1 : 0.7)
             }
             if model.startup.isEmpty { GlassCard { Muted("Aucun élément au démarrage.") } }
+            HStack {
+                Button("Voir aussi les éléments d'ouverture de macOS") {
+                    Links.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                }
+                .buttonStyle(GlassButtonStyle())
+                Spacer()
+            }
         }
     }
 
@@ -264,16 +344,34 @@ struct AppsView: View {
     }
 }
 
+enum AppSort: String, CaseIterable, Identifiable {
+    case size, name, unused
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .size: return "Les plus grosses d'abord"
+        case .name: return "Par nom"
+        case .unused: return "Les moins utilisées d'abord"
+        }
+    }
+}
+
 struct AppRow: View {
     @EnvironmentObject var license: LicenseManager
     @Environment(\.palette) private var p
     let app: AppItem
+    let on: Bool
+    /// Taille de la plus grosse application affichée (pour la barre de proportion).
+    let biggest: Int64
+    let toggle: () -> Void
     let uninstall: () -> Void
     let force: () -> Void
     @State private var hover = false
     var body: some View {
         HStack(spacing: 12) {
+            Button(action: toggle) { CheckCircle(on: on) }.buttonStyle(PlainHover())
             Image(nsImage: NSWorkspace.shared.icon(forFile: app.url.path)).resizable().frame(width: 36, height: 36)
+                .rotation3DEffect(.degrees(hover ? 14 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Strong(app.name, size: 13.5)
@@ -283,7 +381,10 @@ struct AppRow: View {
                 Muted("Version \(app.version.isEmpty ? "—" : app.version) · \(Fmt.ago(app.lastUsed))", size: 11.5)
             }
             Spacer()
-            Text(Fmt.bytes(app.size)).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(p.text)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(Fmt.bytes(app.size)).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(p.text)
+                GlowBar(value: biggest > 0 ? Double(app.size) / Double(biggest) : 0, height: 4).frame(width: 90)
+            }
             Button("Désinstaller", action: uninstall).buttonStyle(GlassButtonStyle())
             Button(action: force) {
                 HStack(spacing: 4) {
@@ -295,7 +396,8 @@ struct AppRow: View {
             .help(license.isPremium ? "Suppression forcée" : "Suppression forcée (Premium)")
         }
         .padding(12)
-        .background(GlassBackground(radius: 16, tint: hover ? Palette.accent : nil))
+        .background(GlassBackground(radius: 16, tint: on || hover ? Palette.accent : nil))
         .onHover { hover = $0 }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hover)
     }
 }
