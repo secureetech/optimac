@@ -53,7 +53,7 @@ struct SettingsView: View {
                                 }
                                 .buttonStyle(PrimaryButtonStyle())
                                 .disabled(key.count < 8 || license.busy)
-                                Button("Acheter") { Links.open(Links.premium) }.buttonStyle(GlassButtonStyle())
+                                Button("Acheter") { model.premiumFeature = nil; model.showPremium = true }.buttonStyle(GlassButtonStyle())
                             }
                         }
                         if let m = license.message { Muted(m) }
@@ -327,14 +327,14 @@ struct PremiumSheet: View {
                 .padding(16)
                 .background(GlassBackground(radius: 18))
 
-                HStack(spacing: 10) {
-                    priceBox("1 mois", "6,90 €", nil)
-                    priceBox("1 an", "49,90 €", "Le plus choisi")
-                    priceBox("2 ans", "89,90 €", nil)
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(Offer.all) { o in offerBox(o) }
                 }
+                Muted("Prix TTC. Résiliable à tout moment, renouvellement automatique. Un abonnement par ordinateur. Cliquez sur une formule pour payer en ligne.", size: 11.5)
+                    .multilineTextAlignment(.center)
 
-                Button(action: { Links.open(Links.premium) }) {
-                    HStack(spacing: 8) { Image(systemName: "crown.fill"); Text("Passer à Premium") }
+                Button(action: { Offer.all[1].open() }) {
+                    HStack(spacing: 8) { Image(systemName: "crown.fill"); Text("Passer à Premium — \(Offer.all[1].price) par an") }
                 }
                 .buttonStyle(PrimaryButtonStyle(large: true))
 
@@ -362,16 +362,48 @@ struct PremiumSheet: View {
         }
     }
 
-    private func priceBox(_ period: String, _ price: String, _ badge: String?) -> some View {
-        VStack(spacing: 4) {
-            if let badge { Tag(text: badge) } else { Tag(text: " ", color: .clear) }
-            Text(price).font(.system(size: 20, weight: .heavy, design: .rounded)).foregroundColor(p.text)
-            Muted(period)
+    private func offerBox(_ o: Offer) -> some View {
+        Button(action: { o.open() }) {
+            VStack(spacing: 4) {
+                if let badge = o.badge { Tag(text: badge) } else { Tag(text: " ", color: .clear) }
+                Text(o.name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(p.muted)
+                Text(o.price).font(.system(size: 21, weight: .heavy, design: .rounded)).foregroundColor(p.text)
+                Muted(o.period, size: 11.5)
+                Text(o.detail).font(.system(size: 11, weight: .semibold)).foregroundColor(p.accentText)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12).padding(.horizontal, 8)
+            .background(GlassBackground(radius: 16, tint: o.badge == nil ? nil : Palette.accent))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(GlassBackground(radius: 16, tint: badge == nil ? nil : Palette.accent))
+        .buttonStyle(PlainHover())
+        .tilt3D(5)
     }
+}
+
+/// Formules Premium et liens de paiement Stripe (grille du 12/11/2026).
+struct Offer: Identifiable {
+    let id: String
+    let name: String
+    let price: String
+    let period: String
+    let detail: String
+    let badge: String?
+    let link: String
+
+    func open() {
+        Sound.click.play()
+        if let u = URL(string: link) { Links.open(u) }
+    }
+
+    static let all = [
+        Offer(id: "mensuel", name: "Mensuel", price: "13,90 €", period: "TTC / mois", detail: "Sans engagement de durée", badge: nil,
+              link: "https://buy.stripe.com/14A28sgml0TScvy1j67AL2C?client_reference_id=src_direct"),
+        Offer(id: "annuel", name: "Annuel", price: "99,80 €", period: "TTC / an", detail: "Soit 8,32 € par mois — économisez 40 %", badge: "Le plus choisi",
+              link: "https://buy.stripe.com/eVq8wQ1rr7ig2UY0f27AL2D?client_reference_id=src_direct"),
+        Offer(id: "duo", name: "2 produits ou 2 ordinateurs", price: "179,90 €", period: "TTC / an", detail: "2 licences Premium — soit 14,99 € par mois", badge: nil,
+              link: "https://buy.stripe.com/5kQ28s3zz320brue5S7AL2E?client_reference_id=src_direct")
+    ]
 }
 
 // MARK: - Rappel par un technicien

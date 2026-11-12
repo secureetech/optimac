@@ -22,7 +22,6 @@ enum Notifier {
 
 /// Liens et coordonnées SecureeTech utilisés dans le logiciel.
 enum Links {
-    static let premium = URL(string: "https://secureetech.com/optipc/")!
     static let site = URL(string: "https://secureetech.com")!
     static let support = "05 54 54 23 43"
     static let email = "contact@secureetech.com"

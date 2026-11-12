@@ -17,7 +17,7 @@ jobs:
       - name: Fabriquer OptiMac.app et le .dmg
         id: build
         env:
-          VERSION: "1.1.0"
+          VERSION: "1.1.1"
           BUILD: ${{ github.run_number }}
         run: ./scripts/build-app.sh
 
@@ -62,7 +62,7 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: "1.1.0"
+          VERSION: "1.1.1"
         run: |
           # On remplace les fichiers sans supprimer la publication : les liens restent valables en permanence.
           TITLE="OptiMac $VERSION (build ${{ github.run_number }})"
