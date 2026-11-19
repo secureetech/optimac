@@ -22,7 +22,9 @@ jobs:
         run: |
           if [ -z "$MAC_CERT_P12" ]; then echo "Pas de certificat configuré : signature ad hoc"; exit 0; fi
           KC="$RUNNER_TEMP/signature.keychain-db"; KP="$(uuidgen)"
-          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          printf '%s' "$MAC_CERT_P12" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/cert.p12" || { echo "ERREUR : MAC_CERT_P12 n'est pas un texte base64 valide (vérifiez que vous avez collé TOUT le fichier MAC_CERT_P12.txt, et pas le mot de passe)."; exit 1; }
+          HEAD_HEX="$(head -c 2 "$RUNNER_TEMP/cert.p12" | xxd -p)"
+          if [ "$HEAD_HEX" != "3082" ]; then echo "ERREUR : le contenu de MAC_CERT_P12 n'est pas un certificat (.p12). Vous avez probablement collé le mot de passe à la place, ou inversé les deux secrets."; exit 1; fi
           security create-keychain -p "$KP" "$KC"
           security set-keychain-settings -lut 21600 "$KC"
           security unlock-keychain -p "$KP" "$KC"
