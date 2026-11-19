@@ -14,11 +14,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Installer le certificat Apple (Developer ID)
+        id: cert
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then echo "Pas de certificat configuré : signature ad hoc"; exit 0; fi
+          KC="$RUNNER_TEMP/signature.keychain-db"; KP="$(uuidgen)"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KP" "$KC" >/dev/null
+          security list-keychain -d user -s "$KC"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          ID="$(security find-identity -v -p codesigning "$KC" | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+          [ -n "$ID" ] || { echo "Certificat Developer ID introuvable dans le trousseau"; exit 1; }
+          echo "identity=$ID" >> "$GITHUB_OUTPUT"
+
       - name: Fabriquer OptiMac.app et le .dmg
         id: build
         env:
           VERSION: "1.2.0"
           BUILD: ${{ github.run_number }}
+          SIGN_IDENTITY: ${{ steps.cert.outputs.identity }}
+          APPLE_ID: contact@secureetech.com
+          APPLE_TEAM_ID: HY2LAK3454
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: ./scripts/build-app.sh
 
       - name: Captures d'écran de l'interface
